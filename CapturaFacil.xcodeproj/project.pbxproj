@@ -3,10 +3,12 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		50F7C91B2F93F9F400B0630F /* RecognizedBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F7C91A2F93F9ED00B0630F /* RecognizedBlock.swift */; };
+		50F7C91D2F93FC0600B0630F /* StructuredContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F7C91C2F93FBFF00B0630F /* StructuredContent.swift */; };
 		A01 /* CapturaFacilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F01 /* CapturaFacilApp.swift */; };
 		A02 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02 /* DesignSystem.swift */; };
 		A03 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F03 /* Models.swift */; };
@@ -22,6 +24,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		50F7C91A2F93F9ED00B0630F /* RecognizedBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizedBlock.swift; sourceTree = "<group>"; };
+		50F7C91C2F93FBFF00B0630F /* StructuredContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredContent.swift; sourceTree = "<group>"; };
 		F01 /* CapturaFacilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturaFacilApp.swift; sourceTree = "<group>"; };
 		F02 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		F03 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -37,11 +41,16 @@
 		PROD /* CapturaFacil.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CapturaFacil.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		50F7C9202F93FC6E00B0630F /* Services */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Services; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
-		FB1 = {
+		FB1 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = ();
+			files = (
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -50,58 +59,71 @@
 		GRP = {
 			isa = PBXGroup;
 			children = (
-				GRPAPP,
-				PROD,
+				GRPAPP /* CapturaFacil */,
+				PROD /* CapturaFacil.app */,
 			);
 			sourceTree = "<group>";
 		};
-		GRPAPP = {
+		GRPAPP /* CapturaFacil */ = {
 			isa = PBXGroup;
 			children = (
-				F01,
-				GRPEXT,
-				GRPMOD,
-				GRPVM,
-				GRPCOMP,
-				GRPVIEWS,
+				50F7C9202F93FC6E00B0630F /* Services */,
+				F01 /* CapturaFacilApp.swift */,
+				GRPEXT /* Extensions */,
+				GRPMOD /* Models */,
+				GRPVM /* ViewModels */,
+				GRPCOMP /* Components */,
+				GRPVIEWS /* Views */,
 			);
-			name = CapturaFacil;
 			path = CapturaFacil;
 			sourceTree = "<group>";
 		};
-		GRPEXT = {
+		GRPCOMP /* Components */ = {
 			isa = PBXGroup;
-			children = (F02,);
-			name = Extensions;
-			path = Extensions;
-			sourceTree = "<group>";
-		};
-		GRPMOD = {
-			isa = PBXGroup;
-			children = (F03,);
-			name = Models;
-			path = Models;
-			sourceTree = "<group>";
-		};
-		GRPVM = {
-			isa = PBXGroup;
-			children = (F04,);
-			name = ViewModels;
-			path = ViewModels;
-			sourceTree = "<group>";
-		};
-		GRPCOMP = {
-			isa = PBXGroup;
-			children = (F05,);
-			name = Components;
+			children = (
+				F05 /* Components.swift */,
+			);
 			path = Components;
 			sourceTree = "<group>";
 		};
-		GRPVIEWS = {
+		GRPEXT /* Extensions */ = {
 			isa = PBXGroup;
-			children = (F06,F07,F08,F09,F10,F11,F12,);
-			name = Views;
+			children = (
+				F02 /* DesignSystem.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		GRPMOD /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F03 /* Models.swift */,
+				50F7C91A2F93F9ED00B0630F /* RecognizedBlock.swift */,
+				50F7C91C2F93FBFF00B0630F /* StructuredContent.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		GRPVIEWS /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F06 /* ContentView.swift */,
+				F07 /* HomeView.swift */,
+				F08 /* CameraView.swift */,
+				F09 /* ProcessingView.swift */,
+				F10 /* ResultsView.swift */,
+				F11 /* HelpAndExplanationViews.swift */,
+				F12 /* HistoryAndToolsViews.swift */,
+			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		GRPVM /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				F04 /* AppState.swift */,
+			);
+			path = ViewModels;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -109,13 +131,21 @@
 /* Begin PBXNativeTarget section */
 		TGT /* CapturaFacil */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = CFGLIST;
-			buildPhases = (SRC, FB1,);
-			buildRules = ();
-			dependencies = ();
+			buildConfigurationList = CFGLIST /* Build configuration list for PBXNativeTarget "CapturaFacil" */;
+			buildPhases = (
+				SRC /* Sources */,
+				FB1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				50F7C9202F93FC6E00B0630F /* Services */,
+			);
 			name = CapturaFacil;
 			productName = CapturaFacil;
-			productReference = PROD;
+			productReference = PROD /* CapturaFacil.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -127,26 +157,51 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
-				TargetAttributes = { TGT = { CreatedOnToolsVersion = 15.0; }; };
+				TargetAttributes = {
+					TGT = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
 			};
-			buildConfigurationList = PROJCFGLIST;
+			buildConfigurationList = PROJCFGLIST /* Build configuration list for PBXProject "CapturaFacil" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = es;
 			hasScannedForEncodings = 0;
-			knownRegions = (es, en, Base,);
+			knownRegions = (
+				es,
+				en,
+				Base,
+			);
 			mainGroup = GRP;
 			productRefGroup = GRP;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (TGT,);
+			targets = (
+				TGT /* CapturaFacil */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		SRC = {
+		SRC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (A01,A02,A03,A04,A05,A06,A07,A08,A09,A10,A11,A12,);
+			files = (
+				A01 /* CapturaFacilApp.swift in Sources */,
+				A02 /* DesignSystem.swift in Sources */,
+				A03 /* Models.swift in Sources */,
+				A04 /* AppState.swift in Sources */,
+				A05 /* Components.swift in Sources */,
+				A06 /* ContentView.swift in Sources */,
+				A07 /* HomeView.swift in Sources */,
+				A08 /* CameraView.swift in Sources */,
+				A09 /* ProcessingView.swift in Sources */,
+				A10 /* ResultsView.swift in Sources */,
+				50F7C91D2F93FC0600B0630F /* StructuredContent.swift in Sources */,
+				A11 /* HelpAndExplanationViews.swift in Sources */,
+				50F7C91B2F93F9F400B0630F /* RecognizedBlock.swift in Sources */,
+				A12 /* HistoryAndToolsViews.swift in Sources */,
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
@@ -166,9 +221,9 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.capturafacil.app";
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturafacil.app;
 				PRODUCT_NAME = CapturaFacil;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.9;
@@ -190,9 +245,9 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.capturafacil.app";
+				PRODUCT_BUNDLE_IDENTIFIER = com.capturafacil.app;
 				PRODUCT_NAME = CapturaFacil;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.9;
@@ -200,7 +255,7 @@
 			};
 			name = Release;
 		};
-		PROJCFG_DEBUG = {
+		PROJCFG_DEBUG /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -240,7 +295,10 @@
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
-				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1","$(inherited)",);
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
@@ -257,7 +315,7 @@
 			};
 			name = Debug;
 		};
-		PROJCFG_RELEASE = {
+		PROJCFG_RELEASE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -312,15 +370,21 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		CFGLIST = {
+		CFGLIST /* Build configuration list for PBXNativeTarget "CapturaFacil" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = (CFG_DEBUG, CFG_RELEASE,);
+			buildConfigurations = (
+				CFG_DEBUG /* Debug */,
+				CFG_RELEASE /* Release */,
+			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		PROJCFGLIST = {
+		PROJCFGLIST /* Build configuration list for PBXProject "CapturaFacil" */ = {
 			isa = XCConfigurationList;
-			buildConfigurations = (PROJCFG_DEBUG, PROJCFG_RELEASE,);
+			buildConfigurations = (
+				PROJCFG_DEBUG /* Debug */,
+				PROJCFG_RELEASE /* Release */,
+			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
