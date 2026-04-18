@@ -1,9 +1,10 @@
 // MARK: - CaptureService.swift
 //
-// Cambios v2:
-//   - mapToCapture usa structured.mathFormulas (ParsedMathFormula con pasos)
-//     en lugar de structured.mathFound (strings crudos).
-//   - Los [SolutionStep] ya no quedan vacíos — se mapean desde ParsedSolutionStep.
+// Cambios v3:
+//   FoundationModelsProcessor ahora devuelve `Capture` directamente,
+//   eliminando la necesidad de mapear StructuredContent → Capture aquí.
+//   CaptureService conserva su responsabilidad de orquestar el pipeline
+//   y construir el fallback, pero el mapeo de datos vive en el procesador.
 
 import UIKit
 
@@ -25,90 +26,35 @@ final class CaptureService: CaptureServiceProtocol {
     }
 
     func process(image: UIImage) async throws -> Capture {
-        // Fase 1: Percepción
+        // Fase 1: Percepción — Vision Framework extrae bloques con metadatos
         let blocks = try await ocrProcessor.recognize(image: image)
 
-        // Fase 2: Comprensión
+        // Fase 2: Comprensión — Foundation Models devuelve Capture ya construido
         let rawResult = try await llmProcessor.process(blocks: blocks)
 
-        guard let structured = rawResult as? StructuredContent else {
+        // El cast a Capture ahora siempre funciona porque FoundationModelsProcessor
+        // construye y devuelve un Capture real, no un tipo intermedio huérfano.
+        guard let capture = rawResult as? Capture else {
+            // Fallback defensivo: si por alguna razón el cast falla (p.ej. al
+            // usar un InformationProcessor alternativo en tests), devolvemos
+            // el texto OCR crudo formateado como Capture mínimo.
             return makeFallbackCapture(
                 rawText: blocks.map(\.text).joined(separator: "\n"),
-                image: image
+                image:   image
             )
         }
 
-        return mapToCapture(structured: structured, image: image)
-    }
-
-    // MARK: - Mapeo StructuredContent → Capture
-
-    private func mapToCapture(structured: StructuredContent, image: UIImage) -> Capture {
+        // Adjuntamos la imagen al Capture construido por el procesador.
+        // El procesador no recibe UIImage, así que no puede incluirla.
         return Capture(
-            title:            structured.mainTitle,
+            id:               capture.id,
+            title:            capture.title,
+            timestamp:        capture.timestamp,
             imageData:        image.jpegData(compressionQuality: 0.8),
-            extractedText:    buildFullText(from: structured),
-            detectedFormulas: buildFormulas(from: structured),
-            explanations:     buildExplanationBlocks(from: structured)
+            extractedText:    capture.extractedText,
+            detectedFormulas: capture.detectedFormulas,
+            explanations:     capture.explanations
         )
-    }
-
-    // MARK: - Fórmulas con pasos
-
-    private func buildFormulas(from content: StructuredContent) -> [MathFormula] {
-        // Fallback: StructuredContent aún no expone `mathFormulas`.
-        // Usamos `mathFound` (strings crudos) si está disponible y
-        // construimos `MathFormula` con pasos vacíos.
-        // Cuando `mathFormulas` esté disponible, podremos mapear pasos reales.
-        #if compiler(>=5.9)
-        // Intentamos acceder a `mathFound` si existe en el modelo.
-        // Nota: Si `mathFound` no existe en tu `StructuredContent`, este código
-        // seguirá compilando pero devolverá []. Asegúrate de alinear el modelo.
-        if let found = (content as AnyObject).value(forKey: "mathFound") as? [String] {
-            return found.map { raw in
-                MathFormula(
-                    rawText: raw,
-                    steps: []
-                )
-            }
-        }
-        #endif
-        return []
-    }
-
-    // MARK: - Texto completo
-
-    private func buildFullText(from content: StructuredContent) -> String {
-        var parts = [content.summary]
-        for section in content.sections {
-            parts.append("\n\(section.title)")
-            parts.append(contentsOf: section.bullets.map { "• \($0)" })
-        }
-        if !content.keyConcepts.isEmpty {
-            parts.append("\nConceptos clave: \(content.keyConcepts.joined(separator: ", "))")
-        }
-        return parts.joined(separator: "\n")
-    }
-
-    // MARK: - Bloques de explicación
-
-    private func buildExplanationBlocks(from content: StructuredContent) -> [ExplanationBlock] {
-        var blocks = [
-            ExplanationBlock(
-                title:      "Idea Central",
-                body:       content.summary,
-                isCoreIdea: true
-            )
-        ]
-        for (i, section) in content.sections.enumerated() {
-            blocks.append(ExplanationBlock(
-                number:     i + 1,
-                title:      section.title,
-                body:       section.bullets.joined(separator: "\n"),
-                isCoreIdea: false
-            ))
-        }
-        return blocks
     }
 
     // MARK: - Fallback
@@ -129,4 +75,3 @@ final class CaptureService: CaptureServiceProtocol {
         )
     }
 }
-
