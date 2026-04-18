@@ -1,28 +1,16 @@
-//
-//  FoundationModelsProcessor.swift
-//
-
 // MARK: - FoundationModelsProcessor.swift
 // Capa de Comprensión: transforma [RecognizedBlock] → StructuredContent
 // usando el modelo de lenguaje on-device de Apple (Foundation Models, iOS 26+).
 //
-// Pipeline:
-//   [RecognizedBlock]
-//     ├─ 1. Filtrado por confidence   (descarta ruido, marca dudosos)
-//     ├─ 2. Clasificación heurística  (geometría → rol semántico pre-inferido)
-//     ├─ 3. Serialización del prompt  (texto estructurado con contexto espacial)
-//     ├─ 4. LanguageModelSession      (on-device, sin red)
-//     └─ 5. Decodificación + metadatos
-//               ↓
-//        StructuredContent
-//
-// Por qué on-device y no API externa:
-//   - Privacidad: ningún dato educativo sale del dispositivo del alumno.
-//   - Fiabilidad: sin dependencia de red para demos.
-//   - Alineación con valores Apple: Apple Intelligence como diferenciador.
+// Cambios v2:
+//   - Heurística de títulos: scoring multi-señal (geometría + posición + texto)
+//     en lugar de solo boundingBox.height.
+//   - Schema de fórmulas ampliado: el LLM devuelve pasos de solución estructurados
+//     (MathFormulaDTO) en lugar de strings crudos.
+//   - CaptureService puede mapear los pasos directamente a [SolutionStep].
 
 import Foundation
-import FoundationModels  // iOS 26+ / macOS 26+  (requiere Xcode 26 beta)
+import FoundationModels
 import CoreGraphics
 
 // MARK: - Errores
@@ -38,7 +26,7 @@ enum FoundationModelsError: LocalizedError {
         case .modelUnavailable:
             return "El modelo on-device no está disponible. Requiere iOS 26 con Apple Intelligence habilitado."
         case .allBlocksDiscarded:
-            return "Todos los bloques tienen confianza demasiado baja para procesar. Intenta con una imagen más nítida."
+            return "Todos los bloques tienen confianza demasiado baja. Intenta con una imagen más nítida."
         case .invalidJSONResponse(let raw):
             return "Respuesta JSON inválida del modelo: \(raw.prefix(120))…"
         case .decodingFailed(let e):
@@ -49,9 +37,6 @@ enum FoundationModelsError: LocalizedError {
 
 // MARK: - Rol semántico heurístico
 
-/// Rol inferido por geometría antes de llamar al LLM.
-/// Se incluye en el prompt para que el modelo tenga contexto espacial explícito
-/// sin necesidad de ver la imagen ni de haber sido fine-tuneado en pizarrones.
 enum BlockRole: String {
     case heading1 = "TITULO_PRINCIPAL"
     case heading2 = "SUBTITULO"
@@ -59,22 +44,68 @@ enum BlockRole: String {
     case dubious  = "DUDOSO"
 }
 
+// MARK: - DTOs internos para decodificación
+
+/// Paso de solución tal como lo devuelve el LLM.
+private struct SolutionStepDTO: Decodable {
+    let number:      Int
+    let description: String
+    let expression:  String
+}
+
+/// Fórmula con pasos tal como la devuelve el LLM.
+private struct MathFormulaDTO: Decodable {
+    let rawText: String
+    let steps:   [SolutionStepDTO]
+}
+
+/// Subconjunto de StructuredContent que genera el LLM.
+/// Usa MathFormulaDTO en lugar de String para capturar los pasos.
+private struct StructuredContentDTO: Decodable {
+    let mainTitle:   String
+    let summary:     String
+    let sections:    [Section]
+    let keyConcepts: [String]
+    let mathFound:   [MathFormulaDTO]?
+}
+
+// MARK: - Resultado público
+
+/// ProcessedStructuredContent enriquecido con fórmulas que ya incluyen pasos de solución.
+/// CaptureService consume este tipo para construir el Capture final.
+struct ProcessedStructuredContent {
+    let mainTitle:          String
+    let summary:            String
+    let sections:           [Section]
+    let keyConcepts:        [String]
+    /// Fórmulas ya parseadas con sus pasos. Nil si no hay matemáticas.
+    let mathFormulas:       [ParsedMathFormula]?
+    /// Campo legacy para compatibilidad con código que solo necesita el string crudo.
+    var mathFound: [String]? { mathFormulas?.map(\.rawText) }
+    let processingMetadata: ProcessingMetadata
+}
+
+/// Fórmula parseada lista para mapear a MathFormula del dominio.
+struct ParsedMathFormula {
+    let rawText: String
+    let steps:   [ParsedSolutionStep]
+}
+
+struct ParsedSolutionStep {
+    let number:      Int
+    let description: String
+    let expression:  String
+}
+
 // MARK: - Procesador principal
 
 final class FoundationModelsProcessor: InformationProcessor {
 
-    // MARK: Umbrales configurables desde LexiScanApp
+    // MARK: Umbrales configurables
 
-    /// Bloques con confidence < este valor se descartan completamente.
     var discardThreshold: Float    = 0.30
-
-    /// Bloques con confidence en [discardThreshold, dubiousThreshold) se marcan DUDOSO.
     var dubiousThreshold: Float    = 0.50
-
-    /// Altura normalizada (Vision [0,1]) mínima para considerar un bloque como H1.
     var h1HeightThreshold: CGFloat = 0.06
-
-    /// Altura normalizada mínima para H2.
     var h2HeightThreshold: CGFloat = 0.035
 
     // MARK: - InformationProcessor
@@ -82,25 +113,18 @@ final class FoundationModelsProcessor: InformationProcessor {
     func process(blocks: [RecognizedBlock]) async throws -> any Sendable {
         let start = Date()
 
-        // ── 1. Filtrado y clasificación ──────────────────────────────────────
         let (usable, metadata) = filterAndClassify(blocks)
         guard !usable.isEmpty else { throw FoundationModelsError.allBlocksDiscarded }
 
-        // ── 2. Construcción del prompt ───────────────────────────────────────
         let systemPrompt = buildSystemPrompt()
         let userPrompt   = buildUserPrompt(from: usable)
+        let rawJSON      = try await callFoundationModel(system: systemPrompt, user: userPrompt)
+        let content      = try decodeResponse(rawJSON, metadata: metadata)
 
-        // ── 3. Llamada al modelo on-device ───────────────────────────────────
-        let rawJSON = try await callFoundationModel(system: systemPrompt, user: userPrompt)
-
-        // ── 4. Decodificación ────────────────────────────────────────────────
-        let content = try decodeResponse(rawJSON, metadata: metadata)
-
-        // ── 5. Inyectar tiempo total de Fase 2 ───────────────────────────────
         return patchProcessingTime(content, start: start)
     }
 
-    // MARK: - Paso 1: Filtrado y clasificación heurística
+    // MARK: - Paso 1: Filtrado y clasificación multi-señal
 
     private func filterAndClassify(
         _ blocks: [RecognizedBlock]
@@ -110,9 +134,14 @@ final class FoundationModelsProcessor: InformationProcessor {
         var flagged   = 0
         var usable: [(block: RecognizedBlock, role: BlockRole)] = []
 
-        // Ordenar por readingOrder garantiza que el prompt refleje el flujo
-        // visual real del pizarrón de arriba a abajo.
-        for block in blocks.sorted(by: { $0.readingOrder < $1.readingOrder }) {
+        let sorted = blocks.sorted { $0.readingOrder < $1.readingOrder }
+
+        // Pre-calcular estadísticas del conjunto para señales relativas
+        let heights     = sorted.map(\.boundingBox.height)
+        let maxHeight   = heights.max() ?? 1
+        let meanHeight  = heights.isEmpty ? 1 : heights.reduce(0, +) / CGFloat(heights.count)
+
+        for block in sorted {
             if block.confidence < discardThreshold {
                 discarded += 1
                 continue
@@ -122,7 +151,12 @@ final class FoundationModelsProcessor: InformationProcessor {
                 role = .dubious
                 flagged += 1
             } else {
-                role = geometricRole(for: block)
+                role = semanticRole(
+                    for: block,
+                    maxHeight: maxHeight,
+                    meanHeight: meanHeight,
+                    isFirstBlock: block.readingOrder == sorted.first?.readingOrder
+                )
             }
             usable.append((block, role))
         }
@@ -132,46 +166,113 @@ final class FoundationModelsProcessor: InformationProcessor {
             blocksDiscarded:     discarded,
             blocksFlagged:       flagged,
             discardThreshold:    discardThreshold,
-            processingTimeMs:    0   // se patchea en el paso 5
+            processingTimeMs:    0
         )
         return (usable, metadata)
     }
 
-    /// Infiere el rol del bloque basándose exclusivamente en la altura normalizada
-    /// de su boundingBox. Mayor altura → letra más grande → probablemente encabezado.
-    private func geometricRole(for block: RecognizedBlock) -> BlockRole {
-        switch block.boundingBox.height {
-        case h1HeightThreshold...:    return .heading1
-        case h2HeightThreshold...:    return .heading2
-        default:                      return .body
+    /// Clasificación multi-señal: combina geometría, posición y análisis textual.
+    ///
+    /// Señales usadas:
+    ///   1. Altura relativa al máximo del conjunto (texto más grande = encabezado)
+    ///   2. Altura absoluta normalizada (umbral fijo para H1/H2)
+    ///   3. Posición Y alta en la imagen (y_vision > 0.75 → probablemente arriba)
+    ///   4. Centrado horizontal (xCenter ≈ 0.5 ± 0.15 → posible título)
+    ///   5. Es el primer bloque en orden de lectura
+    ///   6. Texto corto (≤ 6 palabras → más probable que sea encabezado que cuerpo)
+    ///   7. Todo en mayúsculas o termina en ":"
+    ///
+    /// Sistema de puntos: suma señales → umbral para H1 / H2 / CUERPO
+    private func semanticRole(
+        for block: RecognizedBlock,
+        maxHeight: CGFloat,
+        meanHeight: CGFloat,
+        isFirstBlock: Bool
+    ) -> BlockRole {
+
+        var score: Int = 0
+        let bb   = block.boundingBox
+        let text = block.text.trimmingCharacters(in: .whitespaces)
+
+        // ── Señal 1: altura relativa ──────────────────────────────────────────
+        // Si este bloque tiene la letra más grande (o casi) del conjunto, puntúa fuerte.
+        let heightRatio = maxHeight > 0 ? bb.height / maxHeight : 0
+        if heightRatio >= 0.90 { score += 4 }      // letra dominante del documento
+        else if heightRatio >= 0.70 { score += 2 }  // letra grande pero no la máxima
+
+        // ── Señal 2: altura absoluta (umbrales fijos de Vision) ───────────────
+        if bb.height >= h1HeightThreshold  { score += 3 }
+        else if bb.height >= h2HeightThreshold { score += 1 }
+
+        // ── Señal 3: posición vertical alta (Vision: y=1 = parte superior) ────
+        // Un bloque cuyo borde superior supera el 75% de la altura de la imagen
+        // está en el tercio superior → probable encabezado.
+        let topEdge = bb.origin.y + bb.height
+        if topEdge >= 0.80 { score += 2 }
+        else if topEdge >= 0.65 { score += 1 }
+
+        // ── Señal 4: centrado horizontal ──────────────────────────────────────
+        let xCenter = bb.origin.x + bb.width / 2
+        let distFromCenter = abs(xCenter - 0.5)
+        if distFromCenter <= 0.12 { score += 2 }   // muy centrado
+        else if distFromCenter <= 0.20 { score += 1 }
+
+        // ── Señal 5: primer bloque en la imagen ───────────────────────────────
+        if isFirstBlock { score += 2 }
+
+        // ── Señal 6: longitud del texto ───────────────────────────────────────
+        let wordCount = text.split(separator: " ").count
+        if wordCount <= 4  { score += 2 }   // muy corto → probable encabezado
+        else if wordCount <= 7  { score += 1 }
+        else if wordCount >= 20 { score -= 2 } // párrafo largo → probablemente cuerpo
+
+        // ── Señal 7: patrones textuales ───────────────────────────────────────
+        let isAllCaps    = text == text.uppercased() && text.count > 2
+        let endsWithColon = text.hasSuffix(":")
+        if isAllCaps     { score += 2 }
+        if endsWithColon { score += 1 }
+
+        // ── Decisión final por umbral de puntos ───────────────────────────────
+        // H1: score ≥ 7  (múltiples señales fuertes de título principal)
+        // H2: score ≥ 4  (algunas señales de encabezado secundario)
+        // CUERPO: resto
+        switch score {
+        case 7...:  return .heading1
+        case 4..<7: return .heading2
+        default:    return .body
         }
     }
 
-    // MARK: - Paso 2a: System prompt (reglas de accesibilidad)
+    // MARK: - Paso 2a: System prompt
 
     private func buildSystemPrompt() -> String {
         """
         Eres un asistente especializado en accesibilidad educativa para personas con \
-        dislexia, discalculia y disgrafia. Recibirás bloques de texto extraídos con OCR de notas de clase, pizarrones, presentaciones, entre otras posibilidades, junto con su posición espacial normalizada y un rol semántico \
-        inferido por geometría.
+        dislexia, discalculia y disgrafia. Recibirás bloques de texto extraídos con OCR \
+        de notas de clase, pizarrones o presentaciones, junto con su posición espacial \
+        normalizada, un rol semántico inferido por geometría y una puntuación heurística \
+        de título (titleScore).
 
         REGLAS OBLIGATORIAS:
-        1. JERARQUÍA: Respeta los roles TITULO_PRINCIPAL, SUBTITULO y CUERPO indicados. \
-           Si un bloque TITULO_PRINCIPAL no tiene sentido como título, promueve el \
-           siguiente bloque más prominente.
-        2. SIMPLIFICACIÓN: Reescribe el contenido de CUERPO en lenguaje claro y digerible, conserva ÍNTEGRA la terminología técnica o científica.
-        3. MATEMÁTICAS: Extrae fórmulas y ecuaciones al campo `mathFound`. Normaliza \
-           la notación: ^ para potencias, * para multiplicación. Si no hay matemáticas, \
-           devuelve null.
-        4. DUDOSOS: Usa los bloques marcados DUDOSO solo si aportan contexto claro; \
-           ignóralos si parecen ruido o texto ilegible.
-        5. RESUMEN: El campo `summary` debe ser EXACTAMENTE 2 oraciones. Primera: \
-           describe el tema principal. Segunda: objetivo o conclusión clave.
-        6. CONCEPTOS: Extrae entre 3 y 7 términos o frases clave.
-        7. SALIDA: Responde ÚNICAMENTE con el objeto JSON. Sin texto previo, \
-           sin bloques de código markdown, sin explicaciones adicionales.
+        1. JERARQUÍA: Respeta los roles TITULO_PRINCIPAL y SUBTITULO indicados. Si \
+           ningún bloque tiene rol TITULO_PRINCIPAL pero hay uno con titleScore alto, \
+           úsalo como título principal. Si todos los scores son bajos, infiere el título \
+           del contexto semántico del texto.
+        2. SIMPLIFICACIÓN: Reescribe el contenido de CUERPO en lenguaje claro y \
+           digerible. Conserva ÍNTEGRA la terminología técnica o científica.
+        3. MATEMÁTICAS: Detecta y extrae TODAS las fórmulas, ecuaciones y expresiones \
+           matemáticas al campo `mathFound`. Para cada una genera pasos de solución o \
+           de interpretación. Si no hay matemáticas, devuelve null en `mathFound`.
+        4. PASOS DE FÓRMULAS: Cada paso debe tener: número secuencial, descripción en \
+           lenguaje natural (qué se hace en ese paso), y la expresión matemática \
+           correspondiente. Mínimo 2 pasos, máximo 6. Si la fórmula es una definición \
+           sin solución numérica, describe sus partes componentes como pasos.
+        5. DUDOSOS: Usa los bloques marcados DUDOSO solo si aportan contexto claro.
+        6. RESUMEN: El campo `summary` debe ser EXACTAMENTE 2 oraciones.
+        7. CONCEPTOS: Extrae entre 3 y 7 términos clave.
+        8. SALIDA: Responde ÚNICAMENTE con el objeto JSON. Sin markdown, sin texto extra.
 
-        ESQUEMA JSON REQUERIDO (copia exacta de las claves):
+        ESQUEMA JSON REQUERIDO (copia exacta de claves y tipos):
         {
           "mainTitle": "string",
           "summary": "string",
@@ -179,42 +280,84 @@ final class FoundationModelsProcessor: InformationProcessor {
             { "title": "string", "bullets": ["string"], "confidenceLevel": 0.0 }
           ],
           "keyConcepts": ["string"],
-          "mathFound": ["string"] | null
+          "mathFound": [
+            {
+              "rawText": "string",
+              "steps": [
+                { "number": 1, "description": "string", "expression": "string" }
+              ]
+            }
+          ] | null
         }
         """
     }
 
-    // MARK: - Paso 2b: User prompt con contexto espacial serializado
+    // MARK: - Paso 2b: User prompt con contexto espacial y titleScore
 
-    /// Serializa los bloques incluyendo posición Y, altura y confianza.
-    /// El modelo puede razonar sobre jerarquía visual sin ver la imagen.
-    /// Ejemplo de línea generada:
-    ///   [TITULO_PRINCIPAL | orden:0 | y_norm:0.921 | alto_norm:0.072 | confianza:94%] Fotosíntesis
     private func buildUserPrompt(
         from usable: [(block: RecognizedBlock, role: BlockRole)]
     ) -> String {
         let separator = String(repeating: "─", count: 60)
         var lines = [
-            "CONTENIDO DEL PIZARRÓN (ordenado por posición de lectura):",
-            "Formato: [ROL | orden:N | y_norm:F | alto_norm:F | confianza:F%] texto",
+            "CONTENIDO (ordenado por posición de lectura):",
+            "Formato: [ROL | orden:N | y_norm:F | alto_norm:F | xCenter:F | titleScore:N | confianza:F%] texto",
             separator
         ]
 
+        // Pre-calcular maxHeight para incluir heightRatio en el prompt
+        let maxHeight = usable.map { $0.block.boundingBox.height }.max() ?? 1
+
         for (block, role) in usable {
-            let y    = String(format: "%.3f", block.boundingBox.origin.y)
-            let h    = String(format: "%.3f", block.boundingBox.height)
-            let conf = String(format: "%.0f%%", block.confidence * 100)
-            lines.append("[\(role.rawValue) | orden:\(block.readingOrder) | y_norm:\(y) | alto_norm:\(h) | confianza:\(conf)] \(block.text)")
+            let bb       = block.boundingBox
+            let y        = String(format: "%.3f", bb.origin.y)
+            let h        = String(format: "%.3f", bb.height)
+            let xCenter  = String(format: "%.3f", bb.origin.x + bb.width / 2)
+            let conf     = String(format: "%.0f%%", block.confidence * 100)
+            let score    = computeTitleScore(block: block, maxHeight: maxHeight)
+            lines.append(
+                "[\(role.rawValue) | orden:\(block.readingOrder) | y_norm:\(y) | alto_norm:\(h) | xCenter:\(xCenter) | titleScore:\(score) | confianza:\(conf)] \(block.text)"
+            )
         }
 
         lines += [
             separator,
-            "Analiza el contenido y devuelve el JSON de StructuredContent. " +
-            "Agrupa los bloques CUERPO bajo el SUBTITULO más cercano que los preceda. " +
-            "Si no hay SUBTITULO previo, usa el TITULO_PRINCIPAL como título de sección."
+            "Analiza el contenido y devuelve el JSON. Agrupa bloques CUERPO bajo el " +
+            "SUBTITULO más cercano que los preceda. Si no hay SUBTITULO previo, " +
+            "usa el TITULO_PRINCIPAL. Para las fórmulas en mathFound, genera pasos " +
+            "que expliquen cómo resolverlas o interpretar cada componente."
         ]
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Calcula el titleScore numérico para incluirlo en el prompt.
+    /// El modelo puede usarlo como señal adicional incluso si el rol geométrico
+    /// no coincide perfectamente (ej. un título pequeño con centrado perfecto).
+    private func computeTitleScore(block: RecognizedBlock, maxHeight: CGFloat) -> Int {
+        var score = 0
+        let bb   = block.boundingBox
+        let text = block.text.trimmingCharacters(in: .whitespaces)
+
+        let heightRatio = maxHeight > 0 ? bb.height / maxHeight : 0
+        if heightRatio >= 0.90 { score += 4 } else if heightRatio >= 0.70 { score += 2 }
+
+        if bb.height >= h1HeightThreshold  { score += 3 }
+        else if bb.height >= h2HeightThreshold { score += 1 }
+
+        let topEdge = bb.origin.y + bb.height
+        if topEdge >= 0.80 { score += 2 } else if topEdge >= 0.65 { score += 1 }
+
+        let xCenter = bb.origin.x + bb.width / 2
+        if abs(xCenter - 0.5) <= 0.12 { score += 2 } else if abs(xCenter - 0.5) <= 0.20 { score += 1 }
+
+        let wordCount = text.split(separator: " ").count
+        if wordCount <= 4 { score += 2 } else if wordCount <= 7 { score += 1 }
+        else if wordCount >= 20 { score -= 2 }
+
+        if text == text.uppercased() && text.count > 2 { score += 2 }
+        if text.hasSuffix(":") { score += 1 }
+
+        return max(0, score)
     }
 
     // MARK: - Paso 3: Llamada a Foundation Models
@@ -224,8 +367,6 @@ final class FoundationModelsProcessor: InformationProcessor {
         guard model.availability == .available else {
             throw FoundationModelsError.modelUnavailable
         }
-
-        // `instructions:` es el parámetro correcto para el system prompt en iOS 26.
         let session  = LanguageModelSession(instructions: system)
         let response = try await session.respond(to: user)
         return response.content
@@ -233,9 +374,7 @@ final class FoundationModelsProcessor: InformationProcessor {
 
     // MARK: - Paso 4: Decodificación vía DTO
 
-    private func decodeResponse(_ raw: String, metadata: ProcessingMetadata) throws -> StructuredContent {
-        // Limpieza defensiva: el modelo puede envolver JSON en ```json … ```
-        // aunque el prompt lo prohíbe.
+    private func decodeResponse(_ raw: String, metadata: ProcessingMetadata) throws -> ProcessedStructuredContent {
         let cleaned = raw
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "```json", with: "")
@@ -246,17 +385,31 @@ final class FoundationModelsProcessor: InformationProcessor {
             throw FoundationModelsError.invalidJSONResponse(raw)
         }
 
-        // DTO intermedio: el LLM no conoce processingMetadata, lo añadimos nosotros.
-        // Si usáramos StructuredContent directamente, el decoder fallaría por la
-        // clave faltante.
         do {
             let dto = try JSONDecoder().decode(StructuredContentDTO.self, from: data)
-            return StructuredContent(
+
+            // Mapear MathFormulaDTO → ParsedMathFormula
+            let parsedFormulas: [ParsedMathFormula]? = dto.mathFound.map { formulas in
+                formulas.map { f in
+                    ParsedMathFormula(
+                        rawText: f.rawText,
+                        steps: f.steps.map { s in
+                            ParsedSolutionStep(
+                                number:      s.number,
+                                description: s.description,
+                                expression:  s.expression
+                            )
+                        }
+                    )
+                }
+            }
+
+            return ProcessedStructuredContent(
                 mainTitle:          dto.mainTitle,
                 summary:            dto.summary,
                 sections:           dto.sections,
                 keyConcepts:        dto.keyConcepts,
-                mathFound:          dto.mathFound,
+                mathFormulas:       parsedFormulas,
                 processingMetadata: metadata
             )
         } catch {
@@ -266,10 +419,8 @@ final class FoundationModelsProcessor: InformationProcessor {
 
     // MARK: - Paso 5: Tiempo de procesamiento
 
-    // Nota: sin `inout` — construimos un nuevo valor en lugar de mutar uno existente.
-    // StructuredContent es un struct (valor), así que la copia es barata y explícita.
-    private func patchProcessingTime(_ content: StructuredContent, start: Date) -> StructuredContent {
-        let ms = Date().timeIntervalSince(start) * 1000
+    private func patchProcessingTime(_ content: ProcessedStructuredContent, start: Date) -> ProcessedStructuredContent {
+        let ms   = Date().timeIntervalSince(start) * 1000
         let meta = ProcessingMetadata(
             totalBlocksReceived: content.processingMetadata.totalBlocksReceived,
             blocksDiscarded:     content.processingMetadata.blocksDiscarded,
@@ -277,25 +428,14 @@ final class FoundationModelsProcessor: InformationProcessor {
             discardThreshold:    content.processingMetadata.discardThreshold,
             processingTimeMs:    ms
         )
-        return StructuredContent(
+        return ProcessedStructuredContent(
             mainTitle:          content.mainTitle,
             summary:            content.summary,
             sections:           content.sections,
             keyConcepts:        content.keyConcepts,
-            mathFound:          content.mathFound,
+            mathFormulas:       content.mathFormulas,
             processingMetadata: meta
         )
     }
-}
-
-// MARK: - DTO interno para decodificación
-/// Subconjunto de StructuredContent que el LLM puede generar.
-/// Excluye processingMetadata, que añadimos nosotros en el paso 4.
-private struct StructuredContentDTO: Decodable {
-    let mainTitle:   String
-    let summary:     String
-    let sections:    [Section]
-    let keyConcepts: [String]
-    let mathFound:   [String]?
 }
 
