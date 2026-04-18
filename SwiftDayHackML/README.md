@@ -1,31 +1,37 @@
-# LexiScan — Capa de Percepción (OCR)
+# LexiScan — Motor de IA
 ### Módulo de Inteligencia Artificial · Hackathon Apple
 
 ---
 
 ## Índice
 
-1. [¿Qué hace este módulo?](#1-qué-hace-este-módulo)
+1. [Visión general del módulo](#1-visión-general-del-módulo)
 2. [Estructura de archivos](#2-estructura-de-archivos)
-3. [Arquitectura MVVM](#3-arquitectura-mvvm)
+3. [Arquitectura MVVM y capas de IA](#3-arquitectura-mvvm-y-capas-de-ia)
 4. [Flujo de datos completo](#4-flujo-de-datos-completo)
-5. [Archivos — explicación detallada](#5-archivos--explicación-detallada)
-6. [Modelo de datos: `RecognizedBlock`](#6-modelo-de-datos-recognizedblock)
-7. [El protocolo `InformationProcessor`](#7-el-protocolo-informationprocessor)
-8. [Integración en Xcode](#8-integración-en-xcode)
-9. [Permisos requeridos en Info.plist](#9-permisos-requeridos-en-infoplist)
-10. [Guía de uso para el equipo de frontend](#10-guía-de-uso-para-el-equipo-de-frontend)
-11. [Hoja de ruta: siguientes fases de ML](#11-hoja-de-ruta-siguientes-fases-de-ml)
+5. [Fase 1 — Capa de Percepción (OCR)](#5-fase-1--capa-de-percepción-ocr)
+6. [Fase 2 — Capa de Comprensión (Foundation Models)](#6-fase-2--capa-de-comprensión-foundation-models)
+7. [Modelos de datos](#7-modelos-de-datos)
+8. [ScanViewModel — Estado compartido](#8-scanviewmodel--estado-compartido)
+9. [Vistas y componentes UI](#9-vistas-y-componentes-ui)
+10. [Integración en Xcode](#10-integración-en-xcode)
+11. [Permisos requeridos en Info.plist](#11-permisos-requeridos-en-infoplist)
+12. [Guía de uso para el equipo de frontend](#12-guía-de-uso-para-el-equipo-de-frontend)
+13. [Hoja de ruta](#13-hoja-de-ruta)
+14. [Dependencias externas](#14-dependencias-externas)
 
 ---
 
-## 1. ¿Qué hace este módulo?
+## 1. Visión general del módulo
 
-Este módulo implementa la **Capa de Percepción** de la app de accesibilidad para dislexia/discalculia. Su responsabilidad es:
+LexiScan transforma imágenes de pizarrones, documentos y presentaciones en contenido semántico estructurado y accesible para personas con dislexia y discalculia. El procesamiento ocurre en **dos capas secuenciales**, ambas completamente on-device:
 
-> **Recibir una imagen** (foto de pizarrón, PDF renderizado, captura de presentación) → **extraer todo el texto visible** → **devolver cada línea con sus metadatos** (posición en la imagen, nivel de confianza, orden de lectura).
+| Capa | Archivo | Tecnología | Entrada → Salida |
+|---|---|---|---|
+| **Percepción** | `OCRProcessor` | Vision Framework | `UIImage` → `[RecognizedBlock]` |
+| **Comprensión** | `FoundationModelsProcessor` | Foundation Models (iOS 26+) | `[RecognizedBlock]` → `StructuredContent` |
 
-El módulo **no interpreta** el texto (eso es trabajo de la Capa de Comprensión con Foundation Models, que va después). Solo percibe y captura con la máxima fidelidad posible.
+Las dos capas están desacopladas mediante el protocolo `InformationProcessor`. La Capa de Percepción puede funcionar de forma independiente (útil para tests o dispositivos sin Apple Intelligence). La Capa de Comprensión se activa únicamente cuando se inyecta un procesador en el ViewModel.
 
 ---
 
@@ -33,134 +39,257 @@ El módulo **no interpreta** el texto (eso es trabajo de la Capa de Comprensión
 
 ```
 LexiScan/
-├── LexiScanApp.swift              # Punto de entrada de la app (@main)
+├── LexiScanApp.swift                    # Punto de entrada (@main)
 │
 ├── Models/
-│   └── RecognizedBlock.swift      # Modelo de datos + protocolo InformationProcessor
+│   ├── RecognizedBlock.swift            # Modelo OCR + protocolo InformationProcessor
+│   └── StructuredContent.swift          # Modelo semántico de salida (Fase 2)
 │
 ├── Services/
-│   └── OCRProcessor.swift         # Lógica de Vision Framework (OCR)
+│   ├── OCRProcessor.swift               # Vision Framework — Fase 1
+│   └── FoundationModelsProcessor.swift  # Foundation Models — Fase 2
 │
 ├── ViewModels/
-│   └── ScanViewModel.swift        # Coordinador de estado (MVVM)
+│   └── ScanViewModel.swift              # Coordinador de estado (MVVM)
 │
 ├── Views/
-│   ├── ScanView.swift             # Vista principal
-│   ├── ImagePickerView.swift      # Puente UIKit → SwiftUI (cámara/galería)
-│   ├── BoundingBoxOverlay.swift   # Overlay visual de bounding boxes
-│   └── DebugMetadataView.swift    # Panel técnico de debug
+│   ├── ScanView.swift                   # Vista principal
+│   ├── ImagePickerView.swift            # Puente UIKit → SwiftUI (cámara/galería)
+│   ├── BoundingBoxOverlay.swift         # Overlay visual de bounding boxes
+│   └── DebugMetadataView.swift          # Panel técnico de debug
 │
-└── PrivacyPermissions.plist       # Claves NSCamera / NSPhotoLibrary para Info.plist
+└── PrivacyPermissions.plist             # Claves NSCamera / NSPhotoLibrary
 ```
 
 ---
 
-## 3. Arquitectura MVVM
+## 3. Arquitectura MVVM y capas de IA
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        ScanView                         │  ← SwiftUI (UI pura, sin lógica)
-│  ImagePickerView  │  BoundingBoxOverlay  │  DebugView   │
-└────────────────────────────┬────────────────────────────┘
-                             │  @StateObject / @Published
-                             ▼
-┌─────────────────────────────────────────────────────────┐
-│                     ScanViewModel                       │  ← Coordinador de estado
-│  - Estado publicado (@Published)                        │
-│  - Llama a OCRProcessor                                 │
-│  - Gancho para InformationProcessor (fase 2)            │
-└────────────────────────────┬────────────────────────────┘
-                             │  Protocol: OCRProcessing
-                             ▼
-┌─────────────────────────────────────────────────────────┐
-│                     OCRProcessor                        │  ← Servicio puro (sin UI)
-│  - VNRecognizeTextRequest (.accurate)                   │
-│  - Bounding boxes + confidence                          │
-│  - Ordenamiento por posición Y                          │
-└─────────────────────────────────────────────────────────┘
-                             │  devuelve
-                             ▼
-                    [RecognizedBlock]                        ← Modelo de datos
+┌──────────────────────────────────────────────────────────────┐
+│                          ScanView                            │  ← SwiftUI (sin lógica)
+│   ImagePickerView │ BoundingBoxOverlay │ DebugMetadataView   │
+└───────────────────────────────┬──────────────────────────────┘
+                                │  @StateObject / @Published
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│                       ScanViewModel                          │  ← Coordinador de estado
+│  @Published: recognizedBlocks, structuredContent,            │
+│              isProcessing, isStructuring, errorMessage       │
+└──────┬────────────────────────────────────────┬─────────────┘
+       │ OCRProcessing (protocol)               │ InformationProcessor (protocol)
+       ▼                                        ▼
+┌─────────────────────┐              ┌──────────────────────────────┐
+│    OCRProcessor     │              │  FoundationModelsProcessor   │
+│  Vision Framework   │              │  Foundation Models (iOS 26+) │
+│  .accurate OCR      │              │  5-step pipeline             │
+│  bounding boxes     │              │  on-device LLM               │
+└─────────┬───────────┘              └──────────────┬───────────────┘
+          │ devuelve                                 │ devuelve
+          ▼                                         ▼
+   [RecognizedBlock]                         StructuredContent
 ```
 
-**¿Por qué MVVM aquí?**
+**¿Por qué MVVM con protocolos?**
 
-- **View** solo sabe mostrar datos y reaccionar a gestos — nunca importa Vision.
-- **ViewModel** es el único que conoce tanto la UI como los servicios; centraliza el estado.
-- **Service (OCRProcessor)** es independiente de SwiftUI; se puede testear sin simulador y reemplazar sin tocar la View.
+- La **View** nunca importa Vision ni FoundationModels — solo observa estado.
+- El **ViewModel** orquesta el pipeline secuencial y aísla los errores de cada capa.
+- Los **Servicios** son clases `final` sin dependencias de UI, testeables en aislamiento.
+- Los **protocolos** (`OCRProcessing`, `InformationProcessor`) permiten sustituir cualquier servicio por un mock sin tocar el ViewModel.
 
 ---
 
 ## 4. Flujo de datos completo
 
 ```
-Usuario toca "Cámara" o "Galería"
+Usuario selecciona imagen (cámara o galería)
         │
         ▼
-ScanView.selectPhoto(from:)
+viewModel.processImage(UIImage)
         │
-        ▼
-showImagePicker = true → presenta ImagePickerView (sheet)
-        │
-        ▼ (usuario confirma foto)
-ImagePickerView.Coordinator.didFinishPicking → selectedImage = UIImage
-        │
-        ▼
-ScanView detecta cambio → llama viewModel.processImage(image)
-        │
-        ▼
-ScanViewModel.runOCR(on:)
-    isProcessing = true
+        ├─────── FASE 1: OCR ───────────────────────────────────────────
         │
         ▼
 OCRProcessor.recognize(image:)
-    ├── CIImage(image:)
-    ├── VNRecognizeTextRequest (nivel .accurate, idiomas es/en)
-    ├── VNImageRequestHandler.perform([request])
-    └── buildBlocks(from: observations)
-            ├── Ordena por Y descendente (origen Vision = inferior-izquierdo)
-            └── topCandidates(1) → texto + confidence
+  ├── CIImage desde UIImage
+  ├── VNRecognizeTextRequest (.accurate, es-MX/es/en-US)
+  ├── VNImageRequestHandler.perform([request])
+  └── buildBlocks(observations)
+        ├── Ordena por Y desc (origen Vision = inferior-izquierdo)
+        └── topCandidates(1) → texto + confidence + boundingBox
         │
         ▼
-[RecognizedBlock] → viewModel.recognizedBlocks (publica)
+[RecognizedBlock] ──→ viewModel.recognizedBlocks (@Published)
+                       viewModel.isProcessing = false
+                  ──→ UI re-renderiza: overlay + lista de texto
+        │
+        ├─────── FASE 2: COMPRENSIÓN (si hay InformationProcessor) ─────
         │
         ▼
-ScanView re-renderiza:
-    ├── BoundingBoxOverlay sobre la imagen
-    ├── Lista de texto extraído (orden de lectura)
-    └── DebugMetadataView (IDs, BBox, confidence, tiempo)
+FoundationModelsProcessor.process(blocks:)
+  ├── 1. Filtrado: descarta confidence < 0.50, marca 0.50–0.65 como DUDOSO
+  ├── 2. Clasificación geométrica: boundingBox.height → TITULO/SUBTITULO/CUERPO
+  ├── 3. Serializa bloques con coordenadas en user prompt
+  ├── 4. LanguageModelSession.respond(to:) → JSON string
+  └── 5. JSONDecoder → StructuredContent + ProcessingMetadata
+        │
+        ▼
+StructuredContent ──→ viewModel.structuredContent (@Published)
+                       viewModel.isStructuring = false
+                  ──→ UI renderiza vista accesible
 ```
 
 ---
 
-## 5. Archivos — explicación detallada
+## 5. Fase 1 — Capa de Percepción (OCR)
 
-### `RecognizedBlock.swift` — Modelos
+### `OCRProcessor.swift`
 
-Contiene **dos cosas importantes**:
+Toda la lógica de Vision Framework vive aquí y **solo aquí**. El servicio es `final class` sin dependencias de UI.
 
-**a) El struct `RecognizedBlock`**
+**Configuración clave y su justificación:**
 
 ```swift
-struct RecognizedBlock: Identifiable {
-    let id: UUID
-    let text: String
-    let boundingBox: CGRect   // coordenadas Vision [0,1], origen inferior-izquierdo
-    let confidence: Float     // 0.0 → 1.0
-    let readingOrder: Int     // calculado por posición Y
+request.recognitionLevel = .accurate
+// Usa el motor neural completo. Imprescindible para escritura manual
+// en pizarrón donde las letras son irregulares o el fondo es ruidoso.
+// Alternativa .fast para iteraciones de debug si la velocidad es prioritaria.
+
+request.recognitionLanguages = ["es-MX", "es", "en-US"]
+// Prioridad: español mexicano → español genérico → inglés.
+// El orden importa: Vision usa el primer idioma como modelo principal.
+
+request.minimumTextHeight = 0.015
+// Descarta "texto" que ocupa menos del 1.5% de la altura de imagen.
+// Elimina artefactos visuales y ruido de compresión JPEG.
+
+request.usesLanguageCorrection = true
+// Vision aplica un modelo de lenguaje interno para resolver OCR ambiguo.
+// Especialmente útil para palabras técnicas escritas con errores de tiza.
+```
+
+**Transformación de coordenadas — detalle crítico:**
+
+Vision devuelve `boundingBox` con origen en la esquina **inferior-izquierda** (sistema matemático). SwiftUI y UIKit usan origen **superior-izquierdo** (sistema de pantalla). La conversión se aplica en `BoundingBoxOverlay.swift`:
+
+```
+Sistema Vision:           Sistema SwiftUI:
+(0,1) ─────── (1,1)      (0,0) ─────── (1,0)
+  │                │        │                │
+  │                │   →    │                │
+(0,0) ─────── (1,0)      (0,1) ─────── (1,1)
+
+Fórmula: y_swiftui = (1 - y_vision - height_vision) * containerHeight
+```
+
+### Protocolo `OCRProcessing`
+
+```swift
+protocol OCRProcessing {
+    func recognize(image: UIImage) async throws -> [RecognizedBlock]
 }
 ```
 
-El campo `boundingBox` no es decorativo. La posición del texto en la imagen es la primera señal para detectar estructura sin ML:
+Permite sustituir `OCRProcessor` por un mock en tests, o en el futuro por un motor Core ML fine-tuneado para pizarrones, sin modificar el ViewModel.
 
-| Heurística geométrica | Significado probable |
-|---|---|
-| Bloque en tercio superior, altura > 0.06 | Título |
-| Sangría izquierda pronunciada (x > 0.15) | Bullet / lista |
-| Posición centrada horizontal | Subtítulo |
-| Texto pequeño y denso | Cuerpo / párrafo |
+---
 
-**b) El protocolo `InformationProcessor`**
+## 6. Fase 2 — Capa de Comprensión (Foundation Models)
+
+### `FoundationModelsProcessor.swift`
+
+Transforma `[RecognizedBlock]` en `StructuredContent` mediante un pipeline de 5 pasos usando el modelo de lenguaje on-device de Apple.
+
+**¿Por qué Foundation Models y no una API externa?** Ningún dato educativo sale del dispositivo del alumno, no hay dependencia de red (demos confiables en el WiFi del hackathon), y la privacidad está alineada con usuarios vulnerables.
+
+### Pipeline de 5 pasos
+
+**Paso 1 — Filtrado por confianza**
+
+| Rango de confidence | Acción | Etiqueta en prompt |
+|---|---|---|
+| < 0.50 | Descarte total | No aparece |
+| 0.50 – 0.65 | Incluido con advertencia | `DUDOSO` |
+| > 0.65 | Clasificación geométrica | Rol por geometría |
+
+**Paso 2 — Clasificación heurística por geometría**
+
+| `boundingBox.height` normalizado | Rol | Etiqueta en prompt |
+|---|---|---|
+| ≥ 0.06 | Título principal | `TITULO_PRINCIPAL` |
+| 0.035 – 0.06 | Subtítulo | `SUBTITULO` |
+| < 0.035 | Cuerpo | `CUERPO` |
+
+Los umbrales son propiedades `var` configurables en la instancia del procesador.
+
+**Paso 3 — Serialización del prompt con contexto espacial**
+
+```
+[TITULO_PRINCIPAL | orden:0 | y_norm:0.921 | alto_norm:0.072 | confianza:94%] Fotosíntesis
+[SUBTITULO | orden:1 | y_norm:0.741 | alto_norm:0.038 | confianza:88%] Proceso en cloroplastos
+[CUERPO | orden:2 | y_norm:0.612 | alto_norm:0.021 | confianza:91%] La luz solar se convierte en glucosa
+[DUDOSO | orden:3 | y_norm:0.501 | alto_norm:0.019 | confianza:57%] CO2 + H2O → ...
+```
+
+Incluir `y_norm` y `alto_norm` permite al modelo razonar sobre jerarquía visual sin ver la imagen.
+
+**Paso 4 — Llamada a Foundation Models**
+
+```swift
+let session = LanguageModelSession(instructions: systemPrompt)
+let response = try await session.respond(to: userPrompt)
+```
+
+El system prompt define 7 reglas de accesibilidad: jerarquía, simplificación lingüística (con preservación de terminología técnica), extracción de matemáticas, manejo de bloques dudosos, formato del resumen, conceptos clave, y salida JSON pura.
+
+**Paso 5 — Decodificación vía DTO intermedio**
+
+El JSON del modelo se decodifica en un `StructuredContentDTO` privado (sin `processingMetadata`) y luego se ensambla el `StructuredContent` final añadiendo los metadatos calculados localmente. Incluye limpieza defensiva por si el modelo envuelve el JSON en backticks.
+
+---
+
+## 7. Modelos de datos
+
+### `RecognizedBlock` — salida de Fase 1
+
+```swift
+struct RecognizedBlock: Identifiable {
+    let id: UUID             // identidad única para SwiftUI y correlación entre fases
+    let text: String         // texto transcrito por Vision
+    let boundingBox: CGRect  // coordenadas normalizadas [0,1], origen inferior-izquierdo
+    let confidence: Float    // 0.0 → 1.0, nativo de VNRecognizedText
+    let readingOrder: Int    // índice calculado por posición Y descendente
+}
+```
+
+### `StructuredContent` — salida de Fase 2
+
+```swift
+struct StructuredContent: Codable, Sendable {
+    let mainTitle: String                    // título principal del pizarrón
+    let summary: String                      // resumen de exactamente 2 oraciones
+    let sections: [Section]                  // secciones con título + viñetas + confianza
+    let keyConcepts: [String]                // 3–7 términos clave
+    let mathFound: [String]?                 // fórmulas; nil si no hay matemáticas
+    let processingMetadata: ProcessingMetadata
+}
+
+struct Section: Codable, Sendable {
+    let title: String            // encabezado de la sección
+    let bullets: [String]        // contenido en lenguaje simple (terminología intacta)
+    let confidenceLevel: Float   // confianza promedio de los bloques OCR de la sección
+}
+
+struct ProcessingMetadata: Codable, Sendable {
+    let totalBlocksReceived: Int   // bloques recibidos del OCR
+    let blocksDiscarded: Int       // descartados por confidence < umbral
+    let blocksFlagged: Int         // marcados DUDOSO
+    let discardThreshold: Float    // umbral usado
+    var processingTimeMs: Double   // tiempo total de Fase 2 en ms
+}
+```
+
+### Protocolo `InformationProcessor`
 
 ```swift
 protocol InformationProcessor {
@@ -168,291 +297,191 @@ protocol InformationProcessor {
 }
 ```
 
-Este protocolo es el **contrato de la próxima fase**. Cualquier componente que lo conforme (Foundation Models, Core ML, un mock) puede ser inyectado en el `ScanViewModel` sin modificar nada más.
+El tipo `any Sendable` mantiene el protocolo desacoplado de `StructuredContent`. Un segundo procesador futuro puede devolver su propio tipo sin modificar el protocolo ni el ViewModel.
 
 ---
 
-### `OCRProcessor.swift` — Servicio de Vision
+## 8. ScanViewModel — Estado compartido
 
-Toda la lógica de Vision Framework vive aquí y **solo aquí**.
+**Propiedades `@Published` disponibles para la View:**
 
-**Configuración clave:**
+| Propiedad | Tipo | Disponible desde | Descripción |
+|---|---|---|---|
+| `selectedImage` | `UIImage?` | Inmediatamente | Imagen activa en pantalla |
+| `isProcessing` | `Bool` | Inicio de Fase 1 | Spinner de OCR |
+| `recognizedBlocks` | `[RecognizedBlock]` | Fin de Fase 1 | Bloques crudos con metadatos |
+| `isStructuring` | `Bool` | Inicio de Fase 2 | Spinner de LLM |
+| `structuredContent` | `StructuredContent?` | Fin de Fase 2 | Contenido semántico final |
+| `errorMessage` | `String?` | Cualquier fase | Error de OCR o LLM (prefijado) |
+| `processingTimeMs` | `Double` | Fin de Fase 1 | Tiempo OCR en ms |
+| `averageConfidence` | `Float` | Fin de Fase 1 | Confianza promedio OCR |
+
+**Propiedades computadas de solo lectura:**
 
 ```swift
-request.recognitionLevel = .accurate
-// .accurate usa el motor neural completo. Es más lento que .fast pero
-// necesario para escritura manual en pizarrón donde las letras no son perfectas.
-
-request.recognitionLanguages = ["es-MX", "es", "en-US"]
-// Prioridad: español mexicano → español genérico → inglés
-// Para el hackathon, este orden es correcto. Se puede hacer configurable.
-
-request.minimumTextHeight = 0.015
-// Filtra "texto" de menos del 1.5% de la altura de la imagen — elimina ruido visual.
-
-request.usesLanguageCorrection = true
-// Vision aplica un modelo de lenguaje interno para corregir OCR ambiguo.
-// Ayuda con palabras de pizarrón mal escritas o poco nítidas.
+viewModel.fullExtractedText      // todos los bloques unidos por \n, en readingOrder
+viewModel.highConfidenceBlocks   // bloques con confidence ≥ 0.7
+viewModel.lowConfidenceBlocks    // bloques con confidence < 0.7
 ```
 
-**Transformación de coordenadas:**
-
-Vision devuelve `boundingBox` con origen en la esquina **inferior-izquierda**. SwiftUI y UIKit usan origen **superior-izquierdo**. La conversión se hace en `BoundingBoxOverlay.swift`:
-
-```swift
-// Vision  →  SwiftUI
-y_swiftui = (1 - y_vision - height_vision) * containerHeight
-```
+**Nota sobre concurrencia (Swift 6):** la clase no lleva `@MainActor` a nivel de tipo para evitar conflictos con `@StateObject`. Cada método que muta `@Published` lo lleva de forma explícita. Los errores de Fase 2 no borran los resultados de Fase 1.
 
 ---
 
-### `ScanViewModel.swift` — Coordinador
+## 9. Vistas y componentes UI
 
-El ViewModel orquesta el flujo y publica el estado. Los campos `@Published` que más usará el frontend:
+### `ScanView.swift`
+Vista principal. Presenta imagen con overlay → botones → spinner/error → texto crudo (Fase 1) → panel de debug. El texto crudo es visible mientras el LLM procesa, evitando pantalla en blanco.
 
-| Campo | Tipo | Descripción |
-|---|---|---|
-| `selectedImage` | `UIImage?` | Imagen activa en pantalla |
-| `recognizedBlocks` | `[RecognizedBlock]` | Bloques OCR con metadatos |
-| `isProcessing` | `Bool` | Mostrar spinner |
-| `errorMessage` | `String?` | Mensaje de error si falla Vision |
-| `processingTimeMs` | `Double` | Tiempo de OCR en ms (para debug) |
-| `averageConfidence` | `Float` | Confianza promedio de la sesión |
+### `ImagePickerView.swift`
+Puente `UIViewControllerRepresentable` para `UIImagePickerController`. Soporta cámara y galería. `allowsEditing = true` permite recortar o enderezar la foto antes de procesar.
 
-Propiedades computadas útiles:
+### `BoundingBoxOverlay.swift`
+Dibuja rectángulos de Vision sobre la imagen con código de colores: 🟢 ≥ 85%, 🟡 60–85%, 🔴 < 60%. Incluye conversión interna de coordenadas Vision → SwiftUI.
 
-```swift
-viewModel.fullExtractedText      // String con todo el texto unido por \n
-viewModel.highConfidenceBlocks   // Bloques con confidence ≥ 0.7
-viewModel.lowConfidenceBlocks    // Bloques con confidence < 0.7
-```
+### `DebugMetadataView.swift`
+Panel colapsable con estadísticas globales y filas expandibles por bloque. Solo para desarrollo y demos del hackathon.
 
 ---
 
-### `ImagePickerView.swift` — Puente UIKit → SwiftUI
-
-Envuelve `UIImagePickerController` usando `UIViewControllerRepresentable`.
-
-- Soporta `.camera` y `.photoLibrary` con el mismo componente.
-- `allowsEditing = true` permite al usuario enderezar o recortar la foto del pizarrón antes de procesar — mejora el OCR notablemente.
-- El `Coordinator` es el único objeto que importa UIKit; la View y el ViewModel no lo ven.
-
----
-
-### `BoundingBoxOverlay.swift` — Overlay visual
-
-Dibuja rectángulos de colores sobre la imagen según la confianza de cada bloque:
-
-| Color | Confianza | Interpretación |
-|---|---|---|
-| 🟢 Verde | ≥ 85% | Texto claro, muy confiable |
-| 🟡 Amarillo | 60–85% | Texto difícil / escritura manual |
-| 🔴 Rojo | < 60% | Posible ruido, revisar manualmente |
-
-Los badges muestran el porcentaje exacto encima de cada rectángulo.
-
----
-
-### `DebugMetadataView.swift` — Panel de debug
-
-Panel colapsable que muestra:
-- Cantidad de bloques detectados
-- Tiempo de procesamiento OCR
-- Confianza promedio
-- Por cada bloque (expandible al tocar): UUID parcial, coordenadas BBox, confianza exacta
-
-Este componente es solo para desarrollo y demos del hackathon. En producción, los metadatos se consumen internamente.
-
----
-
-## 6. Modelo de datos: `RecognizedBlock`
-
-```swift
-// Ejemplo de lo que devuelve OCRProcessor para la frase "Fotosíntesis" en la esquina superior
-RecognizedBlock(
-    id: UUID(),                             // "3F2504E0-..."
-    text: "Fotosíntesis",
-    boundingBox: CGRect(                    // Coordenadas Vision normalizadas [0,1]
-        x: 0.05,                            // 5% desde el borde izquierdo
-        y: 0.88,                            // 88% desde el borde inferior (= cerca arriba)
-        width: 0.35,                        // ocupa 35% del ancho
-        height: 0.07                        // ocupa 7% de la altura → letra grande → posible título
-    ),
-    confidence: 0.94,                       // 94% de confianza
-    readingOrder: 0                         // Primer bloque en orden de lectura
-)
-```
-
----
-
-## 7. El protocolo `InformationProcessor`
-
-Este protocolo es el punto de extensión para la **Fase 2 (Capa de Comprensión)**. Para agregar Foundation Models:
-
-```swift
-// Fase 2: crear este archivo en Services/
-import FoundationModels  // iOS 26+ / macOS 26+
-
-struct FoundationModelsProcessor: InformationProcessor {
-    func process(blocks: [RecognizedBlock]) async throws -> any Sendable {
-        let session = LanguageModelSession()
-        let orderedText = blocks
-            .sorted { $0.readingOrder < $1.readingOrder }
-            .map(\.text)
-            .joined(separator: "\n")
-
-        let prompt = """
-        El siguiente texto fue extraído de un pizarrón escolar.
-        Clasifica cada línea como: titulo, subtitulo, definicion, ejemplo, o cuerpo.
-        Devuelve JSON con estructura { bloques: [{ texto, tipo }] }.
-
-        Texto:
-        \(orderedText)
-        """
-
-        return try await session.respond(to: prompt)
-    }
-}
-
-// Inyección en ScanViewModel (en LexiScanApp.swift o en la View padre):
-let viewModel = ScanViewModel()
-viewModel.informationProcessor = FoundationModelsProcessor()
-```
-
-**El ViewModel ya tiene el gancho listo** — solo se inyecta el procesador y el flujo funciona automáticamente.
-
----
-
-## 8. Integración en Xcode
+## 10. Integración en Xcode
 
 ### Crear el proyecto
 
 1. Xcode → **File > New > Project** → **App**
 2. Interface: **SwiftUI**, Language: **Swift**
-3. Nombre: `LexiScan`, Bundle ID: `com.tuequipo.lexiscan`
-4. Mínimo deployment target: **iOS 17.0** (para tener las APIs modernas de Vision)
+3. Deployment target: **iOS 26.0** (Foundation Models requiere iOS 26+)
 
-### Agregar los archivos
-
-Arrastra los archivos al proyecto en la estructura de grupos:
-
-```
-LexiScan/
-├── LexiScanApp.swift
-├── Models/        → RecognizedBlock.swift
-├── Services/      → OCRProcessor.swift
-├── ViewModels/    → ScanViewModel.swift
-└── Views/         → ScanView.swift
-                   → ImagePickerView.swift
-                   → BoundingBoxOverlay.swift
-                   → DebugMetadataView.swift
-```
+> Para desarrollo con solo Fase 1 (OCR), iOS 17.0 es suficiente. Sube a 26.0 al integrar `FoundationModelsProcessor`.
 
 ### Frameworks requeridos
 
-Vision y CoreGraphics son frameworks del sistema — **no se necesita agregar nada** en "Frameworks, Libraries, and Embedded Content". Xcode los resuelve automáticamente con los `import`.
+Todos son del sistema — no se configura nada extra en el target:
+
+| Framework | Archivo | Import |
+|---|---|---|
+| `Vision` | OCRProcessor | `import Vision` |
+| `FoundationModels` | FoundationModelsProcessor | `import FoundationModels` |
+| `CoreGraphics` | RecognizedBlock, BoundingBoxOverlay | `import CoreGraphics` |
+| `SwiftUI` | Todas las vistas | `import SwiftUI` |
+| `UIKit` | ImagePickerView | `import UIKit` |
+
+### Activar Apple Intelligence en el simulador
+
+Foundation Models requiere Apple Intelligence habilitado. En el simulador de Xcode 26: **Settings → Apple Intelligence & Siri → Enable Apple Intelligence**.
 
 ---
 
-## 9. Permisos requeridos en Info.plist
-
-Agrega estas dos claves en el `Info.plist` del target (o en la sección "Privacy" de la configuración del target en Xcode):
+## 11. Permisos requeridos en Info.plist
 
 | Clave | Valor sugerido |
 |---|---|
 | `NSCameraUsageDescription` | "LexiScan necesita acceso a la cámara para fotografiar pizarrones y documentos." |
 | `NSPhotoLibraryUsageDescription` | "LexiScan necesita acceso a tu galería para seleccionar imágenes de pizarrones y apuntes." |
 
-Sin estas claves, la app crasheará al intentar abrir la cámara o la galería.
-
 ---
 
-## 10. Guía de uso para el equipo de frontend
+## 12. Guía de uso para el equipo de frontend
 
-### Lo que obtienes de este módulo
-
-Cuando el usuario selecciona una imagen, el `ScanViewModel` publica automáticamente:
+### Activar el pipeline completo (Fase 1 + Fase 2)
 
 ```swift
-// Leer todos los bloques con metadatos completos:
-viewModel.recognizedBlocks   // [RecognizedBlock]
-
-// Leer solo el texto unido (para mostrar en una Text view simple):
-viewModel.fullExtractedText  // String
-
-// Estado de carga:
-viewModel.isProcessing       // Bool → mostrar spinner
-
-// Error si algo salió mal:
-viewModel.errorMessage       // String? → mostrar alerta
+// En LexiScanApp.swift:
+struct LexiScanApp: App {
+    var body: some Scene {
+        WindowGroup {
+            let vm = ScanViewModel()
+            vm.informationProcessor = FoundationModelsProcessor()
+            return ScanView(viewModel: vm)
+        }
+    }
+}
 ```
 
-### Cómo agregar una vista personalizada
-
-Si el equipo de frontend quiere una vista de resultados diferente a la incluida:
+### Observar ambas fases en una vista personalizada
 
 ```swift
-struct MiVistaPersonalizada: View {
+struct MiVistaAccesible: View {
     @ObservedObject var viewModel: ScanViewModel
 
     var body: some View {
-        VStack {
-            // Imagen
-            if let img = viewModel.selectedImage {
-                Image(uiImage: img).resizable().scaledToFit()
+        ScrollView {
+            // Fase 1: texto crudo disponible en segundos
+            if viewModel.isProcessing {
+                ProgressView("Leyendo pizarrón…")
             }
 
-            // Texto extraído en orden de lectura
-            ForEach(viewModel.recognizedBlocks.sorted { $0.readingOrder < $1.readingOrder }) { block in
-                Text(block.text)
-                    .opacity(Double(block.confidence))  // opacidad proporcional a confianza
+            // Fase 2: contenido estructurado (2–8 segundos adicionales)
+            if viewModel.isStructuring {
+                ProgressView("Organizando contenido…")
+            }
+
+            if let content = viewModel.structuredContent {
+                Text(content.mainTitle).font(.largeTitle)
+                Text(content.summary)
+
+                ForEach(content.sections, id: \.title) { section in
+                    Text(section.title).font(.headline)
+                    ForEach(section.bullets, id: \.self) { bullet in
+                        Text("• \(bullet)")
+                    }
+                }
+
+                // Fórmulas — mayor espaciado para discalculia
+                if let formulas = content.mathFound {
+                    ForEach(formulas, id: \.self) { formula in
+                        Text(formula)
+                            .font(.system(.body, design: .monospaced))
+                            .padding()
+                            .background(Color(.secondarySystemBackground))
+                            .cornerRadius(8)
+                    }
+                }
             }
         }
     }
 }
 ```
 
-### Inyectar un ViewModel personalizado
-
-Si se necesita configurar el procesador OCR (por ejemplo, cambiar idiomas):
+### Configurar umbrales del procesador
 
 ```swift
-// En LexiScanApp.swift o en la View padre:
-let processor = OCRProcessor()
-processor.recognitionLanguages = ["es-MX", "en-US"]
-processor.minimumTextHeight = 0.02
+let processor = FoundationModelsProcessor()
+processor.discardThreshold  = 0.45   // más permisivo con texto poco nítido
+processor.dubiousThreshold  = 0.70
+processor.h1HeightThreshold = 0.07   // títulos deben ser más grandes
+processor.h2HeightThreshold = 0.04
 
-let viewModel = ScanViewModel(ocrProcessor: processor)
+let vm = ScanViewModel()
+vm.informationProcessor = processor
+```
 
-// Pasar el viewModel a la vista:
-ScanView(viewModel: viewModel)  // ← requiere cambiar @StateObject por @ObservedObject
+### Solo OCR (sin LLM)
+
+```swift
+// No inyectar informationProcessor
+let vm = ScanViewModel()
+// structuredContent permanecerá nil; recognizedBlocks funcionará normalmente
 ```
 
 ---
 
-## 11. Hoja de ruta: siguientes fases de ML
+## 13. Hoja de ruta
 
-| Fase | Componente | Herramienta Apple | Estado |
+| Fase | Componente | Tecnología Apple | Estado |
 |---|---|---|---|
-| ✅ **Fase 1** | Extracción OCR + metadatos | Vision Framework | **Completo** |
-| 🔜 **Fase 2** | Clasificación semántica (título/subtítulo/cuerpo) | Foundation Models (iOS 26) | Listo para integrar |
-| 🔜 **Fase 3** | Detección de diagramas y fórmulas matemáticas | Vision + Core ML | Por diseñar |
-| 🔜 **Fase 4** | Renderizado accesible (fuente, espaciado, color) | SwiftUI + Core Text | Por diseñar |
-| 🔜 **Fase 5** | Clasificador de layout fine-tuneado en pizarrones | Create ML Image Classifier | Requiere datos reales |
+| ✅ **Fase 1** | Extracción OCR con bounding boxes y confianza | Vision Framework | **Completo** |
+| ✅ **Fase 2** | Estructuración semántica accesible on-device | Foundation Models (iOS 26) | **Completo** |
+| 🔜 **Fase 3** | Renderizado accesible (fuente, espaciado, contraste) | SwiftUI + Core Text | Pendiente |
+| 🔜 **Fase 4** | Detección y segmentación de diagramas vs. texto | Vision + Core ML | Pendiente |
+| 🔜 **Fase 5** | Clasificador de layout fine-tuneado en pizarrones | Create ML Image Classifier | Requiere datos |
+| 🔜 **Fase 6** | Lectura en voz alta con pausas semánticas | AVSpeechSynthesizer | Pendiente |
 
 ---
 
-## Dependencias externas
+## 14. Dependencias externas
 
-**Ninguna.** Este módulo usa exclusivamente frameworks nativos de Apple:
-
-- `Vision` — OCR
-- `SwiftUI` — UI
-- `UIKit` — ImagePickerController
-- `CoreGraphics` — CGRect para bounding boxes
-- `Foundation` — UUID, async/await
-
-No se requiere instalar pods, SPM packages, ni configurar nada adicional.
+**Ninguna.** Solo frameworks nativos de Apple: `Vision`, `FoundationModels`, `SwiftUI`, `UIKit`, `CoreGraphics`, `Foundation`. No se requieren pods, SPM packages ni llaves de API.
 
 ---
 

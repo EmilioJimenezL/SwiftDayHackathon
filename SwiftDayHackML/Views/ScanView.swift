@@ -1,42 +1,34 @@
 // MARK: - ScanView.swift
-// Vista principal de la Capa de Percepción.
-// Orquesta: selección de imagen → procesamiento OCR → resultados + debug.
+// Vista principal — renderiza ambas fases del pipeline.
+//
+// Cambio clave respecto a la versión anterior:
+//   Usa @ObservedObject en lugar de @StateObject para que el ViewModel
+//   pueda ser inyectado desde LexiScanApp (con informationProcessor ya configurado).
+//   @StateObject solo se justifica cuando la View es dueña del ciclo de vida
+//   del ViewModel; aquí ese rol lo tiene LexiScanApp.
 
 import SwiftUI
 
 struct ScanView: View {
-    @StateObject private var viewModel = ScanViewModel()
+
+    @ObservedObject var viewModel: ScanViewModel
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
 
-                    // MARK: 1 — Área de imagen con overlay de bounding boxes
                     imageSection
-
-                    // MARK: 2 — Botones de captura
                     captureButtons
-
-                    // MARK: 3 — Estado de carga o error
-                    if viewModel.isProcessing {
-                        processingIndicator
-                    } else if let error = viewModel.errorMessage {
-                        errorBanner(error)
-                    }
-
-                    // MARK: 4 — Texto extraído (modo legible)
-                    if !viewModel.recognizedBlocks.isEmpty {
-                        extractedTextSection
-                        debugMetadataSection
-                    }
+                    statusSection
+                    resultsSection
 
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             }
-            .navigationTitle("LexiScan · OCR")
+            .navigationTitle("LexiScan")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if viewModel.selectedImage != nil {
@@ -62,55 +54,50 @@ struct ScanView: View {
         }
     }
 
-    // MARK: - Sub-vistas
+    // MARK: - Sección: imagen + overlay
 
     @ViewBuilder
     private var imageSection: some View {
-        ZStack {
-            if let image = viewModel.selectedImage {
-                // Imagen seleccionada
-                GeometryReader { geo in
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: geo.size.width)
-                        .overlay {
-                            // Overlay de bounding boxes solo cuando hay resultados
-                            if !viewModel.recognizedBlocks.isEmpty {
-                                BoundingBoxOverlay(
-                                    blocks: viewModel.recognizedBlocks,
-                                    imageSize: image.size
-                                )
-                            }
-                        }
-                }
-                .frame(height: 260)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-
-            } else {
-                // Placeholder cuando no hay imagen
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(.secondarySystemBackground))
-                    .frame(height: 200)
+        if let image = viewModel.selectedImage {
+            GeometryReader { geo in
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: geo.size.width)
                     .overlay {
-                        VStack(spacing: 10) {
-                            Image(systemName: "viewfinder.triangular")
-                                .font(.system(size: 44))
-                                .foregroundStyle(.tertiary)
-                            Text("Toma una foto o selecciona\nuna imagen de pizarrón")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
+                        if !viewModel.recognizedBlocks.isEmpty {
+                            BoundingBoxOverlay(
+                                blocks: viewModel.recognizedBlocks,
+                                imageSize: image.size
+                            )
                         }
                     }
             }
+            .frame(height: 260)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        } else {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.secondarySystemBackground))
+                .frame(height: 200)
+                .overlay {
+                    VStack(spacing: 10) {
+                        Image(systemName: "viewfinder.triangular")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.tertiary)
+                        Text("Toma una foto o selecciona\nuna imagen de pizarrón")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
         }
-        .animation(.easeInOut(duration: 0.3), value: viewModel.selectedImage != nil)
     }
+
+    // MARK: - Sección: botones de captura
 
     private var captureButtons: some View {
         HStack(spacing: 12) {
-            // Cámara
             Button {
                 viewModel.selectPhoto(from: .camera)
             } label: {
@@ -121,7 +108,6 @@ struct ScanView: View {
             .tint(.indigo)
             .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
 
-            // Galería
             Button {
                 viewModel.selectPhoto(from: .photoLibrary)
             } label: {
@@ -134,11 +120,35 @@ struct ScanView: View {
         .controlSize(.large)
     }
 
-    private var processingIndicator: some View {
+    // MARK: - Sección: spinners y errores
+
+    @ViewBuilder
+    private var statusSection: some View {
+        if viewModel.isProcessing {
+            pipelineIndicator(
+                message: "Leyendo pizarrón con Vision…",
+                color: .indigo
+            )
+        }
+
+        if viewModel.isStructuring {
+            pipelineIndicator(
+                message: "Organizando con Apple Intelligence…",
+                color: .purple
+            )
+        }
+
+        if let error = viewModel.errorMessage,
+           !viewModel.isProcessing,
+           !viewModel.isStructuring {
+            errorBanner(error)
+        }
+    }
+
+    private func pipelineIndicator(message: String, color: Color) -> some View {
         HStack(spacing: 10) {
-            ProgressView()
-                .tint(.indigo)
-            Text("Procesando con Vision…")
+            ProgressView().tint(color)
+            Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -149,38 +159,52 @@ struct ScanView: View {
     }
 
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(.primary)
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.red.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.red.opacity(0.3), lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.red.opacity(0.3), lineWidth: 1))
     }
 
-    private var extractedTextSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Texto Extraído", systemImage: "text.alignleft")
-                .font(.headline)
+    // MARK: - Sección: resultados
 
-            // Lista de bloques ordenados por readingOrder — representa el flujo
-            // de lectura que se pasará al InformationProcessor
+    @ViewBuilder
+    private var resultsSection: some View {
+        // Fase 2: contenido semántico estructurado (prioritario si está disponible)
+        if let content = viewModel.structuredContent {
+            StructuredContentView(content: content)
+        }
+
+        // Fase 1: texto crudo — siempre visible cuando hay bloques,
+        // incluso mientras Fase 2 está procesando (evita pantalla en blanco)
+        if !viewModel.recognizedBlocks.isEmpty {
+            rawTextSection
+            debugMetadataSection
+        }
+    }
+
+    // MARK: - Texto crudo (Fase 1)
+
+    private var rawTextSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                viewModel.structuredContent != nil ? "OCR Raw" : "Texto Extraído",
+                systemImage: "text.alignleft"
+            )
+            .font(.headline)
+
             ForEach(viewModel.recognizedBlocks.sorted { $0.readingOrder < $1.readingOrder }) { block in
                 HStack(alignment: .top, spacing: 8) {
-                    // Indicador visual de confianza
                     Circle()
-                        .fill(block.confidence >= 0.85 ? Color.green : block.confidence >= 0.6 ? Color.yellow : Color.red)
+                        .fill(confidenceColor(block.confidence))
                         .frame(width: 8, height: 8)
                         .padding(.top, 5)
-
                     Text(block.text)
                         .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
@@ -201,9 +225,20 @@ struct ScanView: View {
             averageConfidence: viewModel.averageConfidence
         )
     }
+
+    private func confidenceColor(_ confidence: Float) -> Color {
+        switch confidence {
+        case 0.85...: return .green
+        case 0.6..<0.85: return .yellow
+        default: return .red
+        }
+    }
 }
 
 // MARK: - Preview
+
 #Preview {
-    ScanView()
+    // En el Preview construimos el ViewModel sin Foundation Models
+    // para no depender de Apple Intelligence en Xcode.
+    ScanView(viewModel: ScanViewModel())
 }

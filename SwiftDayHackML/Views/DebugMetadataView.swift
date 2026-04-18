@@ -1,10 +1,6 @@
 // MARK: - DebugMetadataView.swift
-// Panel colapsable de metadatos técnicos para debugging y demostración en el hackathon.
-//
-// Decisión de diseño: Lo separamos de la vista principal para que el equipo de
-// frontend pueda ocultarlo o reemplazarlo por una vista de producción sin
-// afectar la lógica. En producción, esta información se usará internamente
-// para la heurística geométrica, no se mostrará al usuario final.
+// Panel colapsable de metadatos técnicos para debugging y demos del hackathon.
+// En producción este componente se oculta o se elimina del build.
 
 import SwiftUI
 
@@ -17,16 +13,14 @@ struct DebugMetadataView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // MARK: Header colapsable
+
+            // Header colapsable
             Button {
-                withAnimation(.spring(response: 0.3)) {
-                    isExpanded.toggle()
-                }
+                withAnimation(.spring(response: 0.3)) { isExpanded.toggle() }
             } label: {
                 HStack {
-                    Image(systemName: "ant.circle.fill")
-                        .foregroundStyle(.orange)
-                    Text("Debug / Metadata")
+                    Image(systemName: "ant.circle.fill").foregroundStyle(.orange)
+                    Text("Debug / Metadata OCR")
                         .font(.system(.subheadline, design: .monospaced, weight: .bold))
                         .foregroundStyle(.primary)
                     Spacer()
@@ -43,10 +37,8 @@ struct DebugMetadataView: View {
 
             if isExpanded {
                 Divider()
-                // Stats globales
                 statsRow
                 Divider()
-                // Lista de bloques
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(blocks) { block in
@@ -66,8 +58,6 @@ struct DebugMetadataView: View {
         )
     }
 
-    // MARK: - Sub-vistas
-
     private var summaryBadges: some View {
         HStack(spacing: 6) {
             badge("\(blocks.count) bloques", color: .blue)
@@ -77,7 +67,7 @@ struct DebugMetadataView: View {
 
     private var statsRow: some View {
         HStack(spacing: 16) {
-            statItem(label: "Bloques totales", value: "\(blocks.count)")
+            statItem(label: "Bloques", value: "\(blocks.count)")
             statItem(label: "Confianza media", value: String(format: "%.1f%%", averageConfidence * 100))
             statItem(label: "Tiempo OCR", value: String(format: "%.0f ms", processingTimeMs))
         }
@@ -107,17 +97,15 @@ struct DebugMetadataView: View {
     }
 }
 
-// MARK: - Fila individual de metadatos por bloque
+// MARK: - Fila individual de bloque
 
 struct BlockMetadataRow: View {
     let block: RecognizedBlock
-    @State private var isExpanded: Bool = false
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Header de la fila
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // Índice de orden de lectura
                 Text("#\(block.readingOrder)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
@@ -126,26 +114,22 @@ struct BlockMetadataRow: View {
                     .background(Color.indigo)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                // Texto truncado
                 Text(block.text)
-                    .font(.system(size: 11, design: .default))
+                    .font(.system(size: 11))
                     .lineLimit(isExpanded ? nil : 1)
-                    .foregroundStyle(.primary)
 
                 Spacer()
 
-                // Confidence badge con color semántico
                 Text(block.confidencePercent)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(confidenceColor(block.confidence))
             }
 
-            // Detalles geométricos expandibles
             if isExpanded {
                 VStack(alignment: .leading, spacing: 2) {
-                    metaLine(label: "UUID", value: block.id.uuidString.prefix(8) + "...")
-                    metaLine(label: "BBox", value: block.boundingBoxDescription)
-                    metaLine(label: "Confianza", value: String(format: "%.4f", block.confidence))
+                    metaLine(label: "UUID",     value: block.id.uuidString.prefix(8) + "…")
+                    metaLine(label: "BBox",     value: block.boundingBoxDescription)
+                    metaLine(label: "Confianza",value: String(format: "%.4f", block.confidence))
                 }
                 .padding(.leading, 24)
                 .padding(.top, 2)
@@ -156,9 +140,7 @@ struct BlockMetadataRow: View {
         .background(Color(.tertiarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
-            }
+            withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
         }
     }
 
@@ -170,15 +152,14 @@ struct BlockMetadataRow: View {
                 .frame(width: 55, alignment: .trailing)
             Text(value)
                 .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.primary)
         }
     }
 
     private func confidenceColor(_ confidence: Float) -> Color {
         switch confidence {
-        case 0.85...: return .green
+        case 0.85...:     return .green
         case 0.6..<0.85: return .yellow
-        default:     return .red
+        default:          return .red
         }
     }
 }
