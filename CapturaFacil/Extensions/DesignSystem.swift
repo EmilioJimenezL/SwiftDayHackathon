@@ -2,9 +2,9 @@ import SwiftUI
 
 // MARK: - Color Tokens
 extension Color {
-    static let cfPrimary    = Color(hex: "#1A2B4A")  // Navy — CTAs, headers
-    static let cfAccent     = Color(hex: "#4A90C4")  // Blue — links, highlights
-    static let cfBackground = Color(hex: "#F5F4F1")  // Warm white — page bg
+    static let cfPrimary    = Color(hex: "#4A7FA5")  // Blue — CTAs, headers
+    static let cfAccent     = Color(hex: "#1A2B4A")  // Navy — links, highlights
+    static let cfBackground = Color(hex: "#EBEBEB")  // Warm white — page bg
     static let cfSurface    = Color.white             // Cards & modals
     static let cfBorder     = Color(hex: "#D0CFC9")  // Subtle borders
     static let cfText1      = Color(hex: "#1A1A1A")  // Titles
