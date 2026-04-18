@@ -25,8 +25,9 @@ struct ContentView: View {
         }
         .accentColor(Color.cfPrimary)
         .fullScreenCover(isPresented: $appState.showCamera) {
-            CameraView()
+            CameraPickerView()
                 .environmentObject(appState)
+                .ignoresSafeArea()
         }
         .fullScreenCover(isPresented: $appState.showProcessing) {
             ProcessingView()

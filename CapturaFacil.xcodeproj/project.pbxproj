@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		50F7C91B2F93F9F400B0630F /* RecognizedBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F7C91A2F93F9ED00B0630F /* RecognizedBlock.swift */; };
 		50F7C91D2F93FC0600B0630F /* StructuredContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F7C91C2F93FBFF00B0630F /* StructuredContent.swift */; };
+		50F7C92B2F94122600B0630F /* CameraPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F7C92A2F94121600B0630F /* CameraPickerView.swift */; };
 		A01 /* CapturaFacilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F01 /* CapturaFacilApp.swift */; };
 		A02 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F02 /* DesignSystem.swift */; };
 		A03 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F03 /* Models.swift */; };
@@ -26,6 +27,7 @@
 /* Begin PBXFileReference section */
 		50F7C91A2F93F9ED00B0630F /* RecognizedBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognizedBlock.swift; sourceTree = "<group>"; };
 		50F7C91C2F93FBFF00B0630F /* StructuredContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredContent.swift; sourceTree = "<group>"; };
+		50F7C92A2F94121600B0630F /* CameraPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPickerView.swift; sourceTree = "<group>"; };
 		F01 /* CapturaFacilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturaFacilApp.swift; sourceTree = "<group>"; };
 		F02 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		F03 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 		GRPVIEWS /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				50F7C92A2F94121600B0630F /* CameraPickerView.swift */,
 				F06 /* ContentView.swift */,
 				F07 /* HomeView.swift */,
 				F08 /* CameraView.swift */,
@@ -201,6 +204,7 @@
 				A11 /* HelpAndExplanationViews.swift in Sources */,
 				50F7C91B2F93F9F400B0630F /* RecognizedBlock.swift in Sources */,
 				A12 /* HistoryAndToolsViews.swift in Sources */,
+				50F7C92B2F94122600B0630F /* CameraPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -214,6 +218,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 69GKY9K326;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CapturaFácil necesita la cámara para fotografiar pizarrones y documentos.";
@@ -238,6 +243,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 69GKY9K326;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CapturaFácil necesita la cámara para fotografiar pizarrones y documentos.";

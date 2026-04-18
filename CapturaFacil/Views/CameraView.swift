@@ -155,19 +155,27 @@ struct CameraView: View {
     }
     
     private func capturePhoto() {
-        // Haptic
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
-        
-        // Flash animation
-        withAnimation(.easeOut(duration: 0.1)) {
-            flashVisible = true
-        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.easeOut(duration: 0.1)) { flashVisible = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            withAnimation(.easeIn(duration: 0.15)) {
-                flashVisible = false
-            }
-            appState.didCaptureImage()
+            withAnimation(.easeIn(duration: 0.15)) { flashVisible = false }
+            appState.didCaptureImage(makePlaceholderImage())  // ← UIImage real de AVCapture en producción
+        }
+    }
+    
+    /// Imagen con texto de prueba para el simulador.
+    /// En producción reemplazar por la UIImage de AVCaptureSession.
+    private func makePlaceholderImage() -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 600))
+        return renderer.image { _ in
+            UIColor.white.setFill()
+            UIRectFill(CGRect(x: 0, y: 0, width: 800, height: 600))
+            let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 36), .foregroundColor: UIColor.black]
+            let body:  [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 22),     .foregroundColor: UIColor.darkGray]
+            ("Fotosíntesis" as NSString).draw(at: CGPoint(x: 40, y: 40),  withAttributes: title)
+            ("Proceso por el que las plantas convierten luz en energía." as NSString).draw(at: CGPoint(x: 40, y: 110), withAttributes: body)
+            ("Ecuación: 6CO2 + 6H2O + luz → C6H12O6 + 6O2" as NSString).draw(at: CGPoint(x: 40, y: 160), withAttributes: body)
+            ("Clorofila: pigmento verde que captura la luz solar." as NSString).draw(at: CGPoint(x: 40, y: 210), withAttributes: body)
         }
     }
 }

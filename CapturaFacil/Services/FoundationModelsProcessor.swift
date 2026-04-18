@@ -289,7 +289,6 @@ final class FoundationModelsProcessor: InformationProcessor {
 }
 
 // MARK: - DTO interno para decodificación
-
 /// Subconjunto de StructuredContent que el LLM puede generar.
 /// Excluye processingMetadata, que añadimos nosotros en el paso 4.
 private struct StructuredContentDTO: Decodable {
@@ -299,3 +298,4 @@ private struct StructuredContentDTO: Decodable {
     let keyConcepts: [String]
     let mathFound:   [String]?
 }
+
