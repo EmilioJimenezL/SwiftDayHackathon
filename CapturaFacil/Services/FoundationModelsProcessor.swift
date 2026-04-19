@@ -96,15 +96,24 @@ final class FoundationModelsProcessor: InformationProcessor {
     // que siempre está disponible — sin riesgo de fallo silencioso.
 
     func process(blocks: [RecognizedBlock]) async throws -> any Sendable {
-        let (usable, _, _) = filterAndClassify(blocks)
+        let (usable, discarded, flagged) = filterAndClassify(blocks)
+        #if DEBUG
+        print("[FoundationModelsProcessor] usable: \(usable.count), discarded: \(discarded), flagged: \(flagged)")
+        #endif
         guard !usable.isEmpty else { throw FoundationModelsError.allBlocksDiscarded }
 
-        let rawJSON = try await callFoundationModel(
-            system: buildSystemPrompt(),
-            user:   buildUserPrompt(from: usable, totalBlocks: blocks.count)
-        )
-
-        return try buildCapture(from: rawJSON)
+        do {
+            let rawJSON = try await callFoundationModel(
+                system: buildSystemPrompt(),
+                user:   buildUserPrompt(from: usable, totalBlocks: blocks.count)
+            )
+            return try buildCapture(from: rawJSON)
+        } catch {
+            #if DEBUG
+            print("[FoundationModelsProcessor] ERROR in process(blocks:): \(error)")
+            #endif
+            throw error
+        }
     }
 
     // MARK: - Paso 1: Filtrado y clasificación multi-señal
@@ -228,7 +237,7 @@ final class FoundationModelsProcessor: InformationProcessor {
         3. MATEMÁTICAS: Extrae TODAS las fórmulas y ecuaciones a `mathFound`. \
            Para cada una genera entre 2 y 6 pasos explicativos. Si la fórmula \
            es una definición, describe sus componentes como pasos. Sin matemáticas, \
-           omite completamente el campo `mathFound` del JSON.
+           omite completamente el campo `mathFound` del JSON. NO ENTREGUES EN FORMATO LATEX, PUEDE ROMPER EL FLUJO DE LA APLICACION
         4. DUDOSOS: Usa bloques DUDOSO solo si aportan contexto claro.
         5. RESUMEN: `summary` debe ser EXACTAMENTE 2 oraciones.
         6. CONCEPTOS: Entre 3 y 7 términos clave en `keyConcepts`.
@@ -329,6 +338,28 @@ final class FoundationModelsProcessor: InformationProcessor {
         return response.content
     }
 
+    // Sanitiza secuencias LaTeX-like que rompen el parser JSON, quitando backslashes no válidos.
+    private func sanitizeForJSON(_ input: String) -> String {
+        var s = input
+        // 1) Paréntesis escapados tipo LaTeX: \( y \) → ( y )
+        s = s.replacingOccurrences(of: "\\(", with: "(")
+        s = s.replacingOccurrences(of: "\\)", with: ")")
+        // 2) Corchetes y llaves escapados comunes en LaTeX: \{ \} \[ \] → { } [ ]
+        s = s.replacingOccurrences(of: "\\{", with: "{")
+        s = s.replacingOccurrences(of: "\\}", with: "}")
+        s = s.replacingOccurrences(of: "\\[", with: "[")
+        s = s.replacingOccurrences(of: "\\]", with: "]")
+        // 3) Quitar backslash antes de palabras LaTeX típicas (frac, alpha, beta, etc.)
+        //    Estrategia simple: cualquier backslash seguido de letra (a-z o A-Z) lo quitamos.
+        //    Esto transforma \frac → frac, \alpha → alpha, etc.
+        //    Implementado con una expresión regular.
+        if let regex = try? NSRegularExpression(pattern: "\\\\([A-Za-z])", options: []) {
+            let range = NSRange(s.startIndex..<s.endIndex, in: s)
+            s = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "$1")
+        }
+        return s
+    }
+
     // MARK: - Paso 4+5: Decodificación JSON → Capture
 
     private func buildCapture(from raw: String) throws -> Capture {
@@ -343,7 +374,23 @@ final class FoundationModelsProcessor: InformationProcessor {
         print("[FoundationModelsProcessor] CLEANED JSON to decode →\n\n\(cleaned)\n\n—— END CLEANED ——")
         #endif
 
-        guard let data = cleaned.data(using: .utf8) else {
+        let sanitized = sanitizeForJSON(cleaned)
+        #if DEBUG
+        print("[FoundationModelsProcessor] SANITIZED JSON to decode →\n\n\(sanitized)\n\n—— END SANITIZED ——")
+        #endif
+
+        #if DEBUG
+        if let dataForValidation = sanitized.data(using: .utf8) {
+            do {
+                _ = try JSONSerialization.jsonObject(with: dataForValidation, options: [])
+                print("[FoundationModelsProcessor] JSONSerialization accepted the cleaned JSON.")
+            } catch {
+                print("[FoundationModelsProcessor] JSONSerialization FAILED: \(error)")
+            }
+        }
+        #endif
+
+        guard let data = sanitized.data(using: .utf8) else {
             throw FoundationModelsError.invalidJSONResponse(raw)
         }
 
@@ -353,6 +400,10 @@ final class FoundationModelsProcessor: InformationProcessor {
         } catch {
             throw FoundationModelsError.decodingFailed(error)
         }
+
+        #if DEBUG
+        print("[FoundationModelsProcessor] Decoded DTO OK. title: \(dto.mainTitle), sections: \(dto.sections.count), mathFound: \(dto.mathFound?.count ?? 0)")
+        #endif
 
         // ── Fórmulas con pasos ────────────────────────────────────────────────
         let formulas: [MathFormula] = (dto.mathFound ?? []).map { f in
