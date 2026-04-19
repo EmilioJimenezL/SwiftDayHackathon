@@ -1,9 +1,13 @@
 import SwiftUI
+import AVFoundation
 
 struct ResultsView: View {
     @EnvironmentObject var appState: AppState
     @State private var editableText: String = ""
     @State private var isEditing = false
+    @State private var isSpeaking = false
+    @State private var speechUtterances: [AVSpeechUtterance] = []
+    private let speechSynthesizer = AVSpeechSynthesizer()
     
     var capture: Capture? { appState.currentCapture }
     
@@ -59,7 +63,65 @@ struct ResultsView: View {
         }
         .onAppear {
             editableText = capture?.extractedText ?? ""
+            if speechSynthesizer.isSpeaking {
+                speechSynthesizer.stopSpeaking(at: .immediate)
+            }
+            isSpeaking = false
         }
+    }
+    
+    private func buildNarrationText() -> String {
+        var parts: [String] = []
+        let title = capture?.title ?? "Resultados"
+        parts.append("Título: \(title)")
+        let text = editableText.isEmpty ? (capture?.extractedText ?? "") : editableText
+        if !text.isEmpty {
+            parts.append("Texto extraído: \(text)")
+        }
+        if let formulas = capture?.detectedFormulas, !formulas.isEmpty {
+            for (index, formula) in formulas.enumerated() {
+                parts.append("Fórmula \(index + 1): \(formula.rawText)")
+                if !formula.steps.isEmpty {
+                    parts.append("Pasos de la solución:")
+                    for step in formula.steps.sorted(by: { $0.number < $1.number }) {
+                        let desc = step.description
+                        let expr = step.expression
+                        if expr.isEmpty {
+                            parts.append("Paso \(step.number): \(desc)")
+                        } else {
+                            parts.append("Paso \(step.number): \(desc). Expresión: \(expr)")
+                        }
+                    }
+                }
+            }
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    private func toggleSpeech() {
+        if isSpeaking {
+            // Stop current speech
+            speechSynthesizer.stopSpeaking(at: .immediate)
+            isSpeaking = false
+            #if DEBUG
+            print("Speech synthesizer stopped")
+            #endif
+            return
+        }
+        let narration = buildNarrationText()
+        guard !narration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let utterance = AVSpeechUtterance(string: narration)
+        utterance.voice = AVSpeechSynthesisVoice(language: "es-MX") ?? AVSpeechSynthesisVoice(language: "es-ES")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.pitchMultiplier = 1.0
+        utterance.preUtteranceDelay = 0.0
+        utterance.postUtteranceDelay = 0.2
+        self.speechUtterances = [utterance]
+        speechSynthesizer.speak(utterance)
+        isSpeaking = true
+        #if DEBUG
+        print("Speech synthesizer started...")
+        #endif
     }
     
     private var extractedTextCard: some View {
@@ -108,11 +170,12 @@ struct ResultsView: View {
                 Divider()
                     .frame(height: 20)
                 
-                Button(action: { }) {
-                    Label("Leer en voz alta", systemImage: "speaker.wave.2")
+                Button(action: { toggleSpeech() }) {
+                    Label(isSpeaking ? "Pausar lectura" : "Leer en voz alta", systemImage: isSpeaking ? "pause.circle" : "speaker.wave.2")
                         .font(CFFont.body(14, weight: .medium))
                         .foregroundColor(Color.cfText2)
                 }
+                .accessibilityLabel(isSpeaking ? "Pausar lectura" : "Leer en voz alta")
                 
                 Spacer()
             }
