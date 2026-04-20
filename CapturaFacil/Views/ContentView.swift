@@ -2,25 +2,19 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
         TabView(selection: $appState.selectedTab) {
             HomeView()
-                .tabItem {
-                    Label("Inicio", systemImage: "house.fill")
-                }
+                .tabItem { Label("Inicio", systemImage: "house.fill") }
                 .tag(0)
-            
+
             HistoryView()
-                .tabItem {
-                    Label("Historial", systemImage: "clock")
-                }
+                .tabItem { Label("Historial", systemImage: "clock") }
                 .tag(1)
-            
-            ToolsView()
-                .tabItem {
-                    Label("Herramientas", systemImage: "square.grid.2x2.fill")
-                }
+
+            SettingsView()
+                .tabItem { Label("Configuración", systemImage: "gearshape.fill") }
                 .tag(2)
         }
         .accentColor(Color.cfPrimary)
@@ -40,6 +34,11 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showExplanation) {
             ExplanationView()
                 .environmentObject(appState)
+        }
+        .alert("Error al procesar", isPresented: $appState.showError) {
+            Button("Entendido") { appState.dismissError() }
+        } message: {
+            Text(appState.errorMessage ?? "Error desconocido.")
         }
     }
 }
